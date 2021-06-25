@@ -36,3 +36,4 @@ def test_hamiltonian_monte_carlo_mv():
 
 if __name__ == '__main__':
     test_hamiltonian_monte_carlo()
+    test_hamiltonian_monte_carlo_mv()

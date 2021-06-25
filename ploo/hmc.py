@@ -1,4 +1,4 @@
-from jax import value_and_grad, random
+from jax import value_and_grad, random, lax
 import jax.numpy as jnp
 import jax.scipy.stats as st
 from tqdm import tqdm
@@ -49,10 +49,14 @@ def hmc(
         # q, p = jnp.copy(q), jnp.copy(p)
         p -= step_size * dVdq / 2  # half step
         nsteps = max(0, round(path_len / step_size - 1))
-        for _ in jnp.arange(nsteps):
+        def step(i, a):
+            q, p = a
             q += step_size * p  # whole step
             V, dVdq = pot_vg(q)
             p -= step_size * dVdq  # whole step
+            return (q, p,)
+        # fixme - jax needs number of steps to be static at tracing time
+        q, p = lax.fori_loop(0, nsteps, step, (q,p,))
         q += step_size * p  # whole step
         V, dVdq = pot_vg(q)
         p -= step_size * dVdq / 2  # half step
@@ -63,6 +67,7 @@ def hmc(
 
     # collect all our samples in a list
     samples = [initial_position]
+    step_sizes = [initial_step_size]
 
     step_size = initial_step_size
     step_size_tuning = DualAveragingStepSize(step_size)
@@ -71,7 +76,7 @@ def hmc(
     size = (n_samples + tune,) + initial_position.shape[:1]
     random_key, subkey = random.split(random_key)
     momentum_draws = random.normal(subkey, shape=size)
-    for idx, p0 in tqdm(enumerate(momentum_draws), total=size[0]):
+    for idx, p0 in enumerate(momentum_draws):
         # random key for jitter
         random_key, subkey = random.split(random_key)
         # Integrate over our path to get a new position and momentum
@@ -102,8 +107,9 @@ def hmc(
             step_size, _ = step_size_tuning.update(p_accept)
         elif idx == tune - 1:
             _, step_size = step_size_tuning.update(p_accept)
+        step_sizes.append(step_size)
 
-    return jnp.array(samples[1 + tune :])
+    return jnp.array(samples[1 + tune :]), jnp.array(step_sizes)
 
 
 class DualAveragingStepSize:
