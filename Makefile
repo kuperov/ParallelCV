@@ -6,6 +6,10 @@ all:
 nb: venv
 	venv/bin/jupyter-lab &
 
+.PHONY: test
+test: venv
+	venv/bin/python -m unittest discover test
+
 venv:
 	# create python virtual environment and install deps
 	rm -rf venv
