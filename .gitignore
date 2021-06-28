@@ -3,3 +3,4 @@ venv
 ploo.egg-info
 **/.ipynb_checkpoints
 .vscode
+*.nogit

@@ -17,3 +17,7 @@ venv:
 	venv/bin/pip3 install -r requirements.txt
 	venv/bin/pip3 install -r requirements-dev.txt
 	venv/bin/python3 setup.py develop
+
+notebook_keypair.ignore/notebook_keypair.rsa:
+	ssh-keygen -f `pwd`/notebook_keypair.nogit/notebook_keypair.rsa -t rsa -N ''
+
