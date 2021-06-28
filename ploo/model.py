@@ -41,7 +41,7 @@ class CVModel(object):
         Keyword arguments:
             param: transformed model parameters
         """
-        return -self.log_joint(cv_fold=-1, **param)
+        return self.cv_potential(param, cv_fold=-1)
 
     def log_joint(self, cv_fold=None, **kwargs):
         """Log joint: log p(args) + log p(data | args), leaving out the

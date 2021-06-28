@@ -5,6 +5,10 @@ from tabulate import tabulate
 
 from .model import CVModel
 
+from jax.scipy import stats as st
+from scipy import stats as sst
+import numpy as np
+
 
 class CVPosterior(object):
     """ploo posterior: captures full-data and loo results
@@ -73,3 +77,14 @@ class CVPosterior(object):
     def trace_plot(self, par, figsize=(16, 8)) -> None:
         """Plot trace plots for posterior draws"""
         plt.plot(self.post_draws.position["sigma"][:, :])
+
+    def post_density(self, par, separate=False):
+        all_draws = self.cv_draws.position[par]
+        if not separate:
+            all_draws = all_draws.reshape(all_draws.shape[0]*all_draws.shape[1])
+        for i in range(all_draws.shape[-1]):
+            draws = all_draws[:,i]
+            kde = sst.gaussian_kde(draws)
+            xs = np.linspace(min(draws), max(draws), 1_000)
+            plt.plot(xs, kde(xs))
+        plt.title(f'{par} posterior density')

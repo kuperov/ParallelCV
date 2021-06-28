@@ -4,10 +4,12 @@ all:
 
 .PHONY: nb
 nb: venv
+	# start notebook server
 	venv/bin/jupyter-lab &
 
 .PHONY: test
 test: venv
+	# run unti tests
 	venv/bin/python -m unittest discover test
 
 venv:
@@ -22,4 +24,5 @@ notebook_keypair.ignore/notebook_keypair.rsa:
 	ssh-keygen -f `pwd`/notebook_keypair.nogit/notebook_keypair.rsa -t rsa -N ''
 
 black:
+	# format code
 	venv/bin/black ploo test
