@@ -52,6 +52,17 @@ class CVPosterior(object):
                 for par, draws in self.post_draws.position.items()]
         return tabulate(table_rows,headers=table_headers)
 
+    def cv_trace_plots(self, par, ncols=4, figsize=(40,80)) -> None:
+        """Plot trace plots for every single cross validation fold."""
+        rows = int(jnp.ceil(self.model.cv_folds/ncols))
+        fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
+        for fold, ax in zip(range(self.model.cv_folds), axes.ravel()):
+            ax.plot(self.cv_draws.position[par][:,jnp.arange(fold*4,(fold+1)*4)])
+
+    def trace_plot(self, par, figsize=(16,8)) -> None:
+        """Plot trace plots for posterior draws"""
+        plt.plot(self.post_draws.position['sigma'][:,:]);
+
 
 class PlooPosteriorSet(object):
     """collection of ploo posteriors: stores and compares possibly multiple models"""
@@ -61,18 +72,21 @@ class PlooPosteriorSet(object):
 
 
 def run_hmc(
-    model: CVModel, draws=2000, warmup_steps=500, chains=40, seed=42, out: Progress = None
+    model: CVModel, draws=2000, warmup_steps=500, chains=40, cv_chains_per_fold=4, seed=42, out: Progress = None
 ) -> PlooPosteriorSet:
     """Run HMC after using Stan warmup with NUTS."""
     key = random.PRNGKey(seed)
-    out = out or Progress()
+    print = (out or Progress()).print
+
+    print("Alex's Cross-Validatory Sledgehammer")
+    print("====================================\n")
 
     assert jnp.isfinite(model.potential(model.initial_value)), "Invalid initial value"
     initial_state = nuts.new_state(model.initial_value, model.potential)
     kernel_factory = lambda step_size, inverse_mass_matrix: nuts.kernel(
         model.potential, step_size, inverse_mass_matrix
     )
-    out.print(f"Step 1/3. Starting Stan warmup using NUTS...")
+    print(f"Step 1/3. Starting Stan warmup using NUTS...")
     start = datetime.now()
     state, (step_size, mass_matrix), adapt_chain = stan_warmup.run(
         key,
@@ -83,7 +97,7 @@ def run_hmc(
         initial_step_size=1e-3,
     )
     elapsed = (datetime.now() - start).total_seconds()
-    out.print(
+    print(
         f"          {warmup_steps} warmup draws took {elapsed:.1f} sec ({warmup_steps/elapsed:.1f} iter/sec)."
     )
     hmc_warmup_state, stan_warmup_state, nuts_info = adapt_chain
@@ -119,19 +133,18 @@ def run_hmc(
         initial_positions, model.potential
     )
 
-    out.print(f"Step 2/3. Running main inference with {chains} chains...")
+    print(f"Step 2/3. Running main inference with {chains} chains...")
     start = datetime.now()
     states = inference_loop(
         key, hmc_kernel, initial_states, num_samples=draws, num_chains=chains
     )
     elapsed = (datetime.now() - start).total_seconds()
-    out.print(
+    print(
         f"          {chains*draws:,} HMC draws took {elapsed:.1f} sec"
         f" ({chains*draws/elapsed:,.0f} iter/sec)."
     )
 
     cv_hmc_kernel = cv_kernel(model.cv_potential, step_size, mass_matrix, int_steps)
-    cv_chains_per_fold = 4
     cv_chains = model.cv_folds * cv_chains_per_fold
     cv_folds = jnp.repeat(jnp.arange(1,cv_chains_per_fold+1), model.cv_folds)
     cv_start_idxs = random.choice(
@@ -157,13 +170,13 @@ def run_hmc(
         _, states = lax.scan(one_step, initial_state, keys)
         return states
 
-    out.print(f"Step 3/3. Cross-validation with {model.cv_folds} folds using {cv_chains} chains...")
+    print(f"Step 3/3. Cross-validation with {model.cv_folds} folds using {cv_chains} chains...")
     start = datetime.now()
     loo_states = cv_inference_loop(
         key, cv_hmc_kernel, cv_initial_states, num_samples=draws, num_chains=cv_chains
     )
     elapsed = (datetime.now() - start).total_seconds()
-    out.print(
+    print(
         f"          {cv_chains*draws:,} HMC draws took {elapsed:.1f} sec"
         f" ({cv_chains*draws/elapsed:,.0f} iter/sec)."
     )

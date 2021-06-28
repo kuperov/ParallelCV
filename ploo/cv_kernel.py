@@ -4,14 +4,14 @@ import jax
 from jax import numpy as jnp
 
 from blackjax.hmc import Array, HMCInfo, PyTree
-from blackjax.inference import base, integrators, proposal, metrics, trajectory
+from blackjax.inference import integrators, proposal, metrics
 
 
 class CVHMCState(NamedTuple):
     """State of the HMC algorithm, incorporating CV fold.
 
-    The ploo model needs to know which CV fold should be dropped when
-    evaluating the potential and its gradient.
+    The CV model needs to know which fold should be dropped when
+    evaluating the potential and its gradient, so we track that here
     """
     position: PyTree
     potential_energy: float

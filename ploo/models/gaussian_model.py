@@ -16,14 +16,18 @@ class GaussianModel(ploo.CVModel):
     """
     name = 'Gaussian model'
 
-    def __init__(self, y) -> None:
+    def __init__(self, y, mu_loc=0., mu_scale=1., sigma_shape=2., sigma_rate=2.) -> None:
         self.y = y
         self.folds = jnp.arange(0, len(y))
+        self.mu_loc = mu_loc
+        self.mu_scale = mu_scale
+        self.sigma_shape = sigma_shape
+        self.sigma_rate = sigma_rate
 
     def log_joint(self, cv_fold, mu, sigma):
         log_prior = (
-            st.norm.logpdf(mu, loc=0., scale=1.)
-            + st.gamma.logpdf(sigma, a=2, scale=1.0 / 2.0)
+            st.norm.logpdf(mu, loc=self.mu_loc, scale=self.mu_scale) +
+            st.gamma.logpdf(sigma, a=self.sigma_shape, scale=1. / self.sigma_rate)
         )
         lik_contribs = st.norm.logpdf(self.y, loc=mu, scale=sigma)
         log_lik = jnp.where(self.folds != cv_fold, lik_contribs, 0).sum()
