@@ -2,3 +2,5 @@ ipython
 jupyterlab
 matplotlib
 black
+pystan
+pandas

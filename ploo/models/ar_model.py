@@ -11,7 +11,7 @@ class AR1(ploo.CVModel):
     $$ y_t = \mu + \rho y_{t-1} + \sigma \varepsilon_t, \qquad t=1,\dots,(N-1) $$
     $$ y_0 = \frac{\mu}{1-\rho}+\varepsilon $$
     $$ \varepsilon \sim \mathcal{N}\left( 0, 1\right) $$
-    
+
     We assume we also have priors
     $$ \mu \sim N(0,1/16), \qquad \sigma \sim Gamma(2,2), \qquad\mathrm{and}\qquad \rho \sim Beta(2,2).$$
     """
@@ -22,7 +22,7 @@ class AR1(ploo.CVModel):
 
     def log_joint(self, cv_fold, mu, sigma, rho):
         log_prior = (
-            st.norm.logpdf(mu, loc=0, scale=1./4.)
+            st.norm.logpdf(mu, loc=0, scale=1.0 / 4.0)
             + st.gamma.logpdf(sigma, a=2, scale=1.0 / 2.0)
             + st.beta.logpdf(rho, a=2, b=2)
         )

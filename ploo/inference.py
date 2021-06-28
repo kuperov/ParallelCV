@@ -1,28 +1,30 @@
 from typing import List
 import jax.numpy as jnp
-import jax.scipy.stats as st
 from jax import random, lax, vmap
-import blackjax as bj
 from blackjax import nuts, hmc, stan_warmup
-import matplotlib.pyplot as plt
 from datetime import datetime
-from tabulate import tabulate
 
 from .model import CVModel
 from .progress import Progress
-from .cv_kernel import cv_kernel, new_cv_state
+from .hmc import cv_kernel, new_cv_state
 from .cv_posterior import CVPosterior
 
 
 def run_hmc(
-    model: CVModel, draws=2000, warmup_steps=500, chains=40, cv_chains_per_fold=4, seed=42, out: Progress = None
+    model: CVModel,
+    draws: int = 2000,
+    warmup_steps: int = 500,
+    chains: int = 40,
+    cv_chains_per_fold: int = 4,
+    seed: int = 42,
+    out: Progress = None,
 ) -> CVPosterior:
     """Run HMC after using Stan warmup with NUTS."""
     key = random.PRNGKey(seed)
     print = (out or Progress()).print
 
-    print("Alex's Cross-Validatory Sledgehammer")
-    print("====================================\n")
+    print("The Cross-Validatory Sledgehammer")
+    print("=================================\n")
 
     assert jnp.isfinite(model.potential(model.initial_value)), "Invalid initial value"
     initial_state = nuts.new_state(model.initial_value, model.potential)
@@ -89,7 +91,7 @@ def run_hmc(
 
     cv_hmc_kernel = cv_kernel(model.cv_potential, step_size, mass_matrix, int_steps)
     cv_chains = model.cv_folds * cv_chains_per_fold
-    cv_folds = jnp.repeat(jnp.arange(1,cv_chains_per_fold+1), model.cv_folds)
+    cv_folds = jnp.repeat(jnp.arange(1, cv_chains_per_fold + 1), model.cv_folds)
     cv_start_idxs = random.choice(
         subkey,
         a=jnp.arange(warmup_steps // 2, warmup_steps),
@@ -113,7 +115,9 @@ def run_hmc(
         _, states = lax.scan(one_step, initial_state, keys)
         return states
 
-    print(f"Step 3/3. Cross-validation with {model.cv_folds} folds using {cv_chains} chains...")
+    print(
+        f"Step 3/3. Cross-validation with {model.cv_folds} folds using {cv_chains} chains..."
+    )
     start = datetime.now()
     loo_states = cv_inference_loop(
         key, cv_hmc_kernel, cv_initial_states, num_samples=draws, num_chains=cv_chains

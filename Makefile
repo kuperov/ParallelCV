@@ -21,3 +21,5 @@ venv:
 notebook_keypair.ignore/notebook_keypair.rsa:
 	ssh-keygen -f `pwd`/notebook_keypair.nogit/notebook_keypair.rsa -t rsa -N ''
 
+black:
+	venv/bin/black ploo test

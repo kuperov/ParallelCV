@@ -22,7 +22,7 @@ class CVModel(object):
 
     def cv_potential(self, param, cv_fold):
         """Potential for the given CV fold.
-        
+
         This version of the potential function leaves out a likelihood
         contribution, according to the value of cv_fold.
 
@@ -34,7 +34,7 @@ class CVModel(object):
 
     def potential(self, param):
         """Potential for the full-data model.
-        
+
         This version of the potential function includes all data, i.e. does
         not omit any CV folds.
 
@@ -51,7 +51,7 @@ class CVModel(object):
 
     def log_pred(self, y_tilde, param):
         """Log joint predictive.
-        
+
         param is a map but contains vectors
         """
         raise NotImplementedError()
@@ -70,5 +70,3 @@ class CVModel(object):
     def generate(cls, random_key):
         """Generate a dataset corresponding to the specified random key."""
         raise NotImplementedError()
-
-    
