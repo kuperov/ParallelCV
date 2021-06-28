@@ -25,6 +25,6 @@ setup(
         "Programming Language :: Python :: 3.7",
     ],
     packages=find_packages(exclude=["test"]),
-    install_requires=["jax", "blackjax"],
+    install_requires=["jax", "blackjax", "tabulate"],
     include_package_data=True,
 )
