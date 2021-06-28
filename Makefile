@@ -14,8 +14,9 @@ test: venv
 
 venv:
 	# create python virtual environment and install deps
+	# you'll need virtualenv and pip installed, obvs
 	rm -rf venv
-	virtualenv venv
+	python3 -m virtualenv --python=python3 venv
 	venv/bin/pip3 install -r requirements.txt
 	venv/bin/pip3 install -r requirements-dev.txt
 	venv/bin/python3 setup.py develop
