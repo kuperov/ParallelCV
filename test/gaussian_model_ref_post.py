@@ -26,4 +26,4 @@ dat1 = {"Y": np.array(y), "N": len(y)}
 posterior = stan.build(model, data=dat1)
 fit = posterior.sample(num_chains=4, num_samples=1000)
 df = fit.to_frame()
-df.to_csv('test/gaussian_post.csv')
+df.to_csv("test/gaussian_post.csv")

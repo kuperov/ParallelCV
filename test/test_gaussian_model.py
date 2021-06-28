@@ -13,7 +13,6 @@ def fixture(fname):
 
 
 class TestGaussian(unittest.TestCase):
-
     def test_log_lik(self):
         y = jnp.array([1.0, 0, -1.0])
         # original (not a cv fold)
@@ -49,11 +48,11 @@ class TestGaussian(unittest.TestCase):
         self.assertEqual(post.post_draws.position[p0].shape, (1000, 4))
 
         # I'm reliably informed Dan and Lauren really like code with hypothesis tests
-        mu_draws = post.post_draws.position['mu'].reshape(4000)
-        sigma_draws = post.post_draws.position['mu'].reshape(4000)
-        stan_post = pandas.read_csv(fixture('gaussian_post.csv'))
-        ks_mu = st.kstest(stan_post['mu'], mu_draws)
-        ks_sigma = st.kstest(stan_post['sigma'], sigma_draws)
+        mu_draws = post.post_draws.position["mu"].reshape(4000)
+        sigma_draws = post.post_draws.position["mu"].reshape(4000)
+        stan_post = pandas.read_csv(fixture("gaussian_post.csv"))
+        ks_mu = st.kstest(stan_post["mu"], mu_draws)
+        ks_sigma = st.kstest(stan_post["sigma"], sigma_draws)
         self.assertGreater(ks_mu.pvalue, 1e-3)
         self.assertGreater(ks_sigma.pvalue, 1e-3)
 
