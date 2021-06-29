@@ -25,7 +25,7 @@ class WarmupResults(NamedTuple):
     @property
     def code(self) -> str:
         """Python code for recreating this warmup output.
-        
+
         Use this to create reproducible tests that don't take too ong to run.
         """
         da2c = lambda a: (

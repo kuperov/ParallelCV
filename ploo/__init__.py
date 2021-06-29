@@ -7,5 +7,6 @@ from .inference import (
     WarmupResults,
 )
 from .util import Progress, DummyProgress
-from .model import CVModel
+from .model import CVModel, TransformedCVModel
+from .transforms import LogTransform, IntervalTransform
 from .models import *

@@ -1,7 +1,11 @@
-# HMC is happiest when potentials have unbounded real support
-#
-# Transform objects map from a bounded parameter to an unbounded one.
-# All functions should be JAX jitable
+"""HMC is happiest when potentials have unbounded real support
+
+Transform objects map from a bounded parameter to an unbounded one.
+All functions should be JAX jitable
+
+These objects transform a single variable. Use TransformedCVModel to
+transform a model's parameter space for MCMC.
+"""
 
 from jax import numpy as jnp
 
@@ -16,7 +20,7 @@ class Transform(object):
         raise NotImplementedError()
 
     def __call__(self, param):
-        return self.to_constrained(param)
+        return self.to_unconstrained(param)
 
     def log_det(self, param):
         """Log determinant of the to_constrained transformation."""
@@ -37,7 +41,7 @@ class LogTransform(Transform):
 
 
 class IntervalTransform(Transform):
-    """Transformation from [a,b] --> R using generalized odds ratio transform."""
+    """Transformation [a,b] ⟶ ℝ using generalized odds ratio."""
 
     def __init__(self, a, b) -> None:
         self.a, self.b = a, b
@@ -52,4 +56,4 @@ class IntervalTransform(Transform):
         return self.a + p * (self.b - self.a)
 
     def log_det(self, param):
-        return 0.0
+        return 0.0  # FIXME

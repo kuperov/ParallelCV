@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Dict
 from jax import random, numpy as jnp, lax, jit
 
 
@@ -58,4 +59,49 @@ class CVModel(object):
     @classmethod
     def generate(cls, random_key):
         """Generate a dataset corresponding to the specified random key."""
+        raise NotImplementedError()
+
+
+class TransformedCVModel(CVModel):
+    """Transformed cross-validated model
+    
+    Instances of this class wrap a CVModel object and apply transformations
+    between the constrained model space and unconstrained sampler space.
+    """
+
+    def __init__(self, original_model: CVModel) -> None:
+        self.original_model = original_model
+    
+    def to_unconstrained_coordinates(self, params: Dict[str, jnp.DeviceArray]) -> Dict[str, jnp.DeviceArray]:
+        """Convert params to unconstrained (sampler) parameter space
+
+        The argument params is expressed in constrained (model) coordinate
+        space.
+
+        Keyword arguments:
+            params: dictionary of parameters in constrained (model) parameter
+                    space, keyed by name
+        
+        Returns:
+            dictionary of parameters with same structure as params, but
+            in unconstrained (sampler) parameter space.
+        """
+        raise NotImplementedError()
+
+    def to_constrained_coordinates(self, params: Dict[str, jnp.DeviceArray]) -> Dict[str, jnp.DeviceArray]:
+        """Convert params to constrained (model) parameter space
+        
+        Keyword arguments:
+            params: dictionary of parameters in unconstrained (sampler) parameter
+                    space, keyed by name
+        
+        Returns:
+            dictionary of parameters with same structure as params, but
+            in constrained (model) parameter space.
+        """
+        raise NotImplementedError()
+
+    def log_det(self, params: Dict[str, jnp.DeviceArray]) -> jnp.DeviceArray:
+        """Return total log determinant of transformation to constrained parameters
+        """
         raise NotImplementedError()
