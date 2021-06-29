@@ -25,8 +25,8 @@ Roadmap
 
 This list makes me feel tired just looking at it.
 
-  * [ ] Black-box HMC inference using Stan warmup
-  * [ ] Basic posterior summary output for experiments
+  * [x] Black-box HMC inference using Stan warmup
+  * [x] Basic posterior summary output for experiments
   * [ ] LOO implementation using parallel chains
   * [ ] Functions for comparing models
   * [ ] Inference for multiple models in parallel
