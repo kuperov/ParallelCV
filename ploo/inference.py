@@ -157,7 +157,7 @@ def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
     return WarmupResults(step_size, mass_matrix, initial_values, int_steps)
 
 
-def full_data_inference(model, warmup, draws, chains, key):
+def full_data_inference(model, warmup, draws, chains, rng_key):
     """Full-data inference on model with no CV folds dropped.
 
     Keyword args:
@@ -165,7 +165,7 @@ def full_data_inference(model, warmup, draws, chains, key):
         warmup: results from warmup procedure
         draws: number of posterior draws per chain
         chains: number of chains
-        key: random generator state
+        rng_key: random generator state
     """
 
     def inference_loop(rng_key, kernel, initial_state, num_samples, num_chains):
@@ -179,7 +179,6 @@ def full_data_inference(model, warmup, draws, chains, key):
         return states
 
     # NB: the special CV fold index of -1 indicates full-data inference
-    key, subkey = random.split(key)
     # one initial state per chain
     initial_states = vmap(new_cv_state, in_axes=(0, None, None))(
         warmup.starting_values, model.cv_potential, -1
@@ -188,7 +187,7 @@ def full_data_inference(model, warmup, draws, chains, key):
         model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
     )
     states = inference_loop(
-        key, kernel, initial_states, num_samples=draws, num_chains=chains
+        rng_key, kernel, initial_states, num_samples=draws, num_chains=chains
     )
 
     return states
@@ -199,11 +198,15 @@ def cross_validate(
     warmup: WarmupResults,
     draws: int,
     chains: int,
-    key: DeviceArray,
+    rng_key: DeviceArray,
 ):
     """Cross validation step.
 
     Runs inference acros all CV folds, using cross-validated version of model potential.
+
+    For now, we will collect all the MCMC samples. In the future we'll replace
+    the inference loop with something that calculates the objective functions
+    (and diagnostics) we want using online estimators.
 
     Keyword args:
         model: model instance
@@ -216,32 +219,21 @@ def cross_validate(
         model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
     )
 
-    cv_chains = model.cv_folds * chains
-    start_idxs = jnp.repeat(
-        jnp.expand_dims(jnp.arange(0, chains), axis=1), model.cv_folds, axis=1
-    )
-    cv_folds = jnp.repeat(
-        jnp.expand_dims(jnp.arange(0, model.cv_folds), axis=0), chains, axis=0
-    )
-    cv_initial_positions = {
-        k: warmup.starting_values[k][start_idxs] for k in model.initial_value
-    }
-    cv_initial_states = vmap(new_cv_state, in_axes=(0, None, (0, 1)))(
-        cv_initial_positions, model.cv_potential, cv_folds
+    # start each fold's MCMC chains with the same set of initial states
+    one_fold_initial_states = vmap(new_cv_state, (0, None, None))
+    cv_initial_states = vmap(one_fold_initial_states, (None, None, 0))(
+        warmup.starting_values, model.cv_potential, jnp.arange(0, model.cv_folds)
     )
 
-    def cv_inference_loop(rng_key, kernel, initial_state, num_samples, num_chains):
-        def one_step(states, rng_key):
-            keys = random.split(rng_key, num_chains)
-            states, _ = vmap(kernel)(keys, states)
-            return states, states
+    cv_folds = model.cv_folds
 
-        keys = random.split(rng_key, num_samples)
-        _, states = lax.scan(one_step, initial_state, keys)
-        return states
+    # each step operates on the 2D cv_folds*chains array of states
+    def one_step(states, rng_subkey):
+        keys = random.split(rng_key, chains)
+        states, _ = vmap(cv_hmc_kernel, (0, 0))(keys, states)
+        return states, states
 
-    cv_states = cv_inference_loop(
-        key, cv_hmc_kernel, cv_initial_states, draws, cv_chains
-    )
+    rng_subkeys = random.split(rng_key, draws)
+    _, cv_states = lax.scan(one_step, cv_initial_states, rng_subkeys)
 
     return cv_states
