@@ -116,6 +116,7 @@ class TransformedCVModel(CVModel):
         model_params = self.to_constrained_coordinates(mcmc_params)
         return self.original_model.log_pred(y_tilde, model_params)        
 
+    @property
     def initial_value(self):
         iv = self.original_model.initial_value
         return self.to_unconstrained_coordinates(iv)

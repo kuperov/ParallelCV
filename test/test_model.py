@@ -1,6 +1,7 @@
 import unittest
 
 from jax import numpy as jnp
+from jax.lib.xla_bridge import parameter
 from jax.scipy import stats as st
 
 from ploo import CVModel, LogTransform, TransformedCVModel
@@ -35,6 +36,14 @@ class _GaussianVarianceModel(CVModel):
     def log_pred(self, y_tilde, param):
         return super().log_pred(y_tilde, param)
 
+    @property
+    def initial_value(self):
+        return {'sigma_sq': 1.0}
+
+    def log_pred(self, y_tilde, params):
+        sigma_sq = params['sigma_sq']
+        return st.norm.logpdf(y_tilde, loc=self.mean, scale=jnp.sqrt(sigma_sq))
+
 
 class _TransformedGaussianVarianceModel(TransformedCVModel):
     def __init__(self, model: CVModel) -> None:
@@ -65,6 +74,17 @@ class TestModelParam(unittest.TestCase):
         lj_tf = self.tf.log_joint(-1, sigma_sq=jnp.log(2.5))
         ldet = self.tf.log_det({'sigma_sq': 2.5})
         self.assertEqual(lj_orig, lj_tf - ldet)
+
+    def test_initial_value(self):
+        self.assertEqual(self.orig.initial_value['sigma_sq'], 1.0)
+        self.assertEqual(self.tf.initial_value['sigma_sq'], 0.0)
+
+    def test_log_pred(self):
+        for sig_sq in [0.5, 1.5]:
+            self.assertEqual(
+                self.orig.log_pred(2.5, {'sigma_sq': sig_sq}),
+                self.tf.log_pred(2.5, {'sigma_sq': jnp.log(sig_sq)})
+            )
 
 
 if __name__ == '__main__':
