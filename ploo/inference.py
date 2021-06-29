@@ -58,8 +58,9 @@ def run_hmc(
         seed: random seed
         out: progress indicator
     """
-    key = random.PRNGKey(seed)
     print = (out or Progress()).print
+    rng_key = random.PRNGKey(seed)
+    warmup_key, inference_key, cv_key = random.split(rng_key, 3)
 
     print("The Cross-Validatory Sledgehammer")
     print("=================================\n")
@@ -69,7 +70,7 @@ def run_hmc(
     else:
         print(f"Step 1/3. Starting Stan warmup using NUTS...")
         timer = Timer()
-        warmup_results = warmup(model, warmup_steps, chains, key)
+        warmup_results = warmup(model, warmup_steps, chains, warmup_key)
         print(
             f"          {warmup_steps} warmup draws took {timer}"
             f" ({warmup_steps/timer.sec:.1f} iter/sec)."
@@ -77,7 +78,7 @@ def run_hmc(
 
     print(f"Step 2/3. Running main inference with {chains} chains...")
     timer = Timer()
-    states = full_data_inference(model, warmup_results, draws, chains, key)
+    states = full_data_inference(model, warmup_results, draws, chains, inference_key)
     print(
         f"          {chains*draws:,} HMC draws took {timer}"
         f" ({chains*draws/timer.sec:,.0f} iter/sec)."
@@ -89,7 +90,7 @@ def run_hmc(
         f"Step 3/3. Cross-validation with {model.cv_folds:,} folds "
         f"using {cv_chains:,} chains..."
     )
-    cv_states = cross_validate(model, warmup_results, draws, chains, key)
+    cv_states = cross_validate(model, warmup_results, draws, chains, cv_key)
     print(
         f"          {cv_chains*draws:,} HMC draws took {timer}"
         f" ({cv_chains*draws/timer.sec:,.0f} iter/sec)."
@@ -98,7 +99,7 @@ def run_hmc(
     return CVPosterior(model, states, cv_states, seed, chains)
 
 
-def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
+def warmup(model, warmup_steps, num_start_pos, rng_key) -> WarmupResults:
     """Run Stan warmup
 
     We sample initial positions from second half of the Stan warmup, running
@@ -119,14 +120,14 @@ def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
     assert jnp.isfinite(
         model.cv_potential(model.initial_value, -1)
     ), "Invalid initial value"
-
+    warmup_key, start_val_key = random.split(rng_key)
     potential = lambda p: model.cv_potential(p, cv_fold=-1)  # full-data potential
     initial_state = nuts.new_state(model.initial_value, potential)
     kernel_factory = lambda step_size, inverse_mass_matrix: nuts.kernel(
         potential, step_size, inverse_mass_matrix
     )
     state, (step_size, mass_matrix), adapt_chain = stan_warmup.run(
-        key,
+        warmup_key,
         kernel_factory,
         initial_state,
         num_steps=warmup_steps,
@@ -140,9 +141,8 @@ def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
     # warmup chain
     varname = next(iter(hmc_warmup_state.position))
     warmup_steps = hmc_warmup_state.position[varname].shape[0]
-    key, subkey = random.split(key)
     start_idxs = random.choice(
-        subkey,
+        start_val_key,
         a=jnp.arange(warmup_steps // 2, warmup_steps),
         shape=(num_start_pos,),
         replace=True,
@@ -178,13 +178,13 @@ def full_data_inference(
         model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
     )
 
-    def one_step(states, rng_key):
-        keys = random.split(rng_key, chains)
+    def one_step(states, iter_key):
+        keys = random.split(iter_key, chains)
         states, _ = vmap(kernel)(keys, states)
         return states, states
 
-    keys = random.split(rng_key, draws)
-    _, states = lax.scan(one_step, initial_states, keys)
+    draw_keys = random.split(rng_key, draws)
+    _, states = lax.scan(one_step, initial_states, draw_keys)
 
     return states
 
@@ -214,7 +214,7 @@ def cross_validate(
     cv_folds = model.cv_folds
     # chain_indexes = [0, 1, 2, 3, 0, 1, 2, 3, 0, ...]
     chain_indexes = jnp.resize(jnp.arange(chains), chains * cv_folds)
-    # fold_indexes = [0, 0, 0, 0, 1, 1, 1, 1, 2, ...]
+    # fold_indexes  = [0, 0, 0, 0, 1, 1, 1, 1, 2, ...]
     fold_indexes = jnp.repeat(jnp.arange(cv_folds), chains)
     assert chain_indexes.shape == fold_indexes.shape
     chain_starting_values = {
@@ -229,12 +229,12 @@ def cross_validate(
     # each step operates vector of states (representing a cross-section across chains)
     # and vector of rng keys, one per draw
     def one_step(states, rng_subkey):
-        keys = random.split(rng_key, chains * cv_folds)  # [chain_indexes]
+        keys = random.split(rng_subkey, chains * cv_folds)
         states, _ = vmap(kernel)(keys, states)
         # TODO: untransform position and evaluate lpd
         return states, states
 
-    rng_keys = random.split(rng_key, draws)
-    _, states = lax.scan(one_step, cv_initial_states, rng_keys)
+    draw_keys = random.split(rng_key, draws)
+    _, states = lax.scan(one_step, cv_initial_states, draw_keys)
 
     return states
