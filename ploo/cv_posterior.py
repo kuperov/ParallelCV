@@ -20,11 +20,12 @@ class CVPosterior(object):
         seed: seed used when invoking inference
     """
 
-    def __init__(self, model: CVModel, post_draws, cv_draws, seed) -> None:
+    def __init__(self, model: CVModel, post_draws, cv_draws, seed, chains) -> None:
         self.model = model
         self.post_draws = post_draws
         self.cv_draws = cv_draws
         self.seed = seed
+        self.chains = chains
 
     def __repr__(self) -> str:
         title = f"{self.model.name} inference summary"
@@ -70,21 +71,39 @@ class CVPosterior(object):
         rows = int(jnp.ceil(self.model.cv_folds / ncols))
         fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
         for fold, ax in zip(range(self.model.cv_folds), axes.ravel()):
-            ax.plot(
-                self.cv_draws.position[par][:, jnp.arange(fold * 4, (fold + 1) * 4)]
-            )
+            chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
+            ax.plot(self.cv_draws.position[par][:, chain_indexes])
 
     def trace_plot(self, par, figsize=(16, 8)) -> None:
         """Plot trace plots for posterior draws"""
         plt.plot(self.post_draws.position["sigma"][:, :])
 
-    def post_density(self, par, separate=False):
-        all_draws = self.cv_draws.position[par]
-        if not separate:
-            all_draws = all_draws.reshape(all_draws.shape[0] * all_draws.shape[1])
-        for i in range(all_draws.shape[-1]):
+    def post_density(self, par, combine=False):
+        """Kernel densities for full-data posteriors"""
+        all_draws = self.post_draws.position[par]
+        if combine:
+            all_draws = jnp.expand_dims(jnp.reshape(all_draws, (-1,)), axis=1)
+        for i in range(all_draws.shape[1]):
             draws = all_draws[:, i]
             kde = sst.gaussian_kde(draws)
             xs = np.linspace(min(draws), max(draws), 1_000)
             plt.plot(xs, kde(xs))
         plt.title(f"{par} posterior density")
+
+    def cv_post_densities(self, par, combine=False, ncols=4, figsize=(40, 80)):
+        """Small-multiple kernel densities for cross-validation posteriors."""
+        rows = int(jnp.ceil(self.model.cv_folds / ncols))
+        fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
+        for fold, ax in zip(range(self.model.cv_folds), axes.ravel()):
+            chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
+            all_draws = self.cv_draws.position[par][:, chain_indexes]
+            if combine:
+                all_draws = jnp.expand_dims(jnp.reshape(all_draws, (-1,)), axis=1)
+            for i in range(self.chains):
+                draws = all_draws[:, i]
+                try:
+                    kde = sst.gaussian_kde(draws)
+                    xs = np.linspace(min(draws), max(draws), 1_000)
+                    ax.plot(xs, kde(xs))
+                except:
+                    print(f"Error evaluating kde for fold {fold}, chain {i}")

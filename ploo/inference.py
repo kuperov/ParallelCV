@@ -95,7 +95,7 @@ def run_hmc(
         f" ({cv_chains*draws/timer.sec:,.0f} iter/sec)."
     )
 
-    return CVPosterior(model, states, cv_states, seed)
+    return CVPosterior(model, states, cv_states, seed, chains)
 
 
 def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
@@ -157,7 +157,9 @@ def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
     return WarmupResults(step_size, mass_matrix, initial_values, int_steps)
 
 
-def full_data_inference(model, warmup, draws, chains, rng_key):
+def full_data_inference(
+    model: CVModel, warmup: WarmupResults, draws: int, chains: int, rng_key: DeviceArray
+):
     """Full-data inference on model with no CV folds dropped.
 
     Keyword args:
@@ -167,7 +169,6 @@ def full_data_inference(model, warmup, draws, chains, rng_key):
         chains: number of chains
         rng_key: random generator state
     """
-
     # NB: the special CV fold index of -1 indicates full-data inference
     # one initial state per chain
     initial_states = vmap(new_cv_state, in_axes=(0, None, None))(
@@ -210,27 +211,30 @@ def cross_validate(
         chains: number of chains per fold
         key: random generator state
     """
-    cv_hmc_kernel = cv_kernel(
+    cv_folds = model.cv_folds
+    # chain_indexes = [0, 1, 2, 3, 0, 1, 2, 3, 0, ...]
+    chain_indexes = jnp.resize(jnp.arange(chains), chains * cv_folds)
+    # fold_indexes = [0, 0, 0, 0, 1, 1, 1, 1, 2, ...]
+    fold_indexes = jnp.repeat(jnp.arange(cv_folds), chains)
+    assert chain_indexes.shape == fold_indexes.shape
+    chain_starting_values = {
+        k: sv[chain_indexes] for (k, sv) in warmup.starting_values.items()
+    }
+    cv_initial_states = vmap(new_cv_state, (0, None, 0))(
+        chain_starting_values, model.cv_potential, fold_indexes
+    )
+    kernel = cv_kernel(
         model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
     )
-
-    # We start each fold's MCMC chains with the same set of initial states.
-    # fold_initial_states(states, potential, fold_no) generates a 1D array of length chains
-    fold_initial_states = vmap(new_cv_state, (0, None, None))
-    # cv_initial_states is 2D chains*folds array
-    cv_initial_states = vmap(fold_initial_states, (None, None, 0))(
-        warmup.starting_values, model.cv_potential, jnp.arange(0, model.cv_folds)
-    )
-
-    cv_folds = model.cv_folds
-
-    # each step operates on the 2D cv_folds*chains array of states
+    # each step operates vector of states (representing a cross-section across chains)
+    # and vector of rng keys, one per draw
     def one_step(states, rng_subkey):
-        keys = random.split(rng_key, chains)
-        states, _ = vmap(cv_hmc_kernel, (0, 0))(keys, states)
+        keys = random.split(rng_key, chains * cv_folds)  # [chain_indexes]
+        states, _ = vmap(kernel)(keys, states)
+        # TODO: untransform position and evaluate lpd
         return states, states
 
-    rng_subkeys = random.split(rng_key, draws)
-    _, cv_states = lax.scan(one_step, cv_initial_states, rng_subkeys)
+    rng_keys = random.split(rng_key, draws)
+    _, states = lax.scan(one_step, cv_initial_states, rng_keys)
 
-    return cv_states
+    return states

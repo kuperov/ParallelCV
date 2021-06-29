@@ -52,7 +52,9 @@ class TestInference(unittest.TestCase):
         self.assertEqual(states.position["mu"].shape, (1000, 4))
 
     def test_cross_validation(self):
-        states = cross_validate(self.gauss, self.wu, draws=1e3, chains=2, rng_key=self.key)
+        states = cross_validate(
+            self.gauss, self.wu, draws=1e3, chains=2, rng_key=self.key
+        )
 
 
 if __name__ == "__main__":
