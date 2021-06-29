@@ -9,6 +9,7 @@ from .model import CVModel
 from .progress import Progress
 from .hmc import cv_kernel, new_cv_state
 from .cv_posterior import CVPosterior
+from .util import Timer
 
 
 class WarmupResults(NamedTuple):
@@ -51,34 +52,31 @@ def run_hmc(
         print('Step 1/3. Skipping warmup')
     else:
         print(f"Step 1/3. Starting Stan warmup using NUTS...")
-        start = datetime.now()
+        timer = Timer()
         warmup_results = warmup(model, warmup_steps, chains, key)
-        elapsed = (datetime.now() - start).total_seconds()
         print(
-            f"          {warmup_steps} warmup draws took {elapsed:.1f} sec"
-            f" ({warmup_steps/elapsed:.1f} iter/sec)."
+            f"          {warmup_steps} warmup draws took {timer}"
+            f" ({warmup_steps/timer.sec:.1f} iter/sec)."
         )
 
     print(f"Step 2/3. Running main inference with {chains} chains...")
-    start = datetime.now()
+    timer = Timer()
     key, states = full_data_inference(model, warmup_results, draws, chains, key)
-    elapsed = (datetime.now() - start).total_seconds()
     print(
-        f"          {chains*draws:,} HMC draws took {elapsed:.1f} sec"
-        f" ({chains*draws/elapsed:,.0f} iter/sec)."
+        f"          {chains*draws:,} HMC draws took {timer}"
+        f" ({chains*draws/timer.sec:,.0f} iter/sec)."
     )
 
-    start = datetime.now()
+    timer = Timer()
     cv_chains = chains * model.cv_folds
     print(
         f"Step 3/3. Cross-validation with {model.cv_folds:,} folds "
         f"using {cv_chains:,} chains..."
     )
     cv_states = cross_validate(model, warmup_results, draws, chains, key)
-    elapsed = (datetime.now() - start).total_seconds()
     print(
-        f"          {cv_chains*draws:,} HMC draws took {elapsed:.1f} sec"
-        f" ({cv_chains*draws/elapsed:,.0f} iter/sec)."
+        f"          {cv_chains*draws:,} HMC draws took {timer}"
+        f" ({cv_chains*draws/timer.sec:,.0f} iter/sec)."
     )
 
     return CVPosterior(model, states, cv_states, seed)
