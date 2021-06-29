@@ -15,11 +15,11 @@ def fixture(fname):
 class TestGaussian(unittest.TestCase):
     def test_log_lik(self):
         y = jnp.array([1.0, 0, -1.0])
-        
+
         # original (not a cv fold)
         m = GaussianModel(y, mu_loc=0.0, mu_scale=1.0, sigma_shape=2.0, sigma_rate=2.0)
         lj = m.log_joint(cv_fold=-1, mu=0.7, sigma=1.8)
-        
+
         # NB gamma(a, rate) == gamma(a, scale=1/rate)
         ref_lp = st.norm(0.0, 1.0).logpdf(0.7) + st.gamma(
             a=2.0, scale=1.0 / 2.0

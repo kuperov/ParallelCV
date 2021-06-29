@@ -15,8 +15,9 @@ from .util import Timer
 class WarmupResults(NamedTuple):
     """Results of the warmup procedure
 
-    These parameters are used to configure future HMC runs.    
+    These parameters are used to configure future HMC runs.
     """
+
     step_size: float
     mass_matrix: jnp.ndarray
     starting_values: List[Dict]
@@ -30,7 +31,7 @@ def run_hmc(
     chains: int = 8,
     seed: int = 42,
     out: Progress = None,
-    warmup_results = None
+    warmup_results=None,
 ) -> CVPosterior:
     """Run HMC after using Stan warmup with NUTS.
 
@@ -49,7 +50,7 @@ def run_hmc(
     print("=================================\n")
 
     if warmup_results:
-        print('Step 1/3. Skipping warmup')
+        print("Step 1/3. Skipping warmup")
     else:
         print(f"Step 1/3. Starting Stan warmup using NUTS...")
         timer = Timer()
@@ -84,7 +85,7 @@ def run_hmc(
 
 def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
     """Run Stan warmup
-    
+
     Keyword args:
         model: model to work with
         warmup_steps: number of warmup iterations
@@ -134,7 +135,7 @@ def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
 
 def full_data_inference(model, warmup, draws, chains, key):
     """Full-data inference on model with no CV folds dropped.
-    
+
     Keyword args:
         model: model to perform inference on
         warmup: results from warmup procedure
@@ -142,7 +143,9 @@ def full_data_inference(model, warmup, draws, chains, key):
         chains: number of chains
         key: random generator state
     """
-    hmc_kernel = hmc.kernel(model.potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps)
+    hmc_kernel = hmc.kernel(
+        model.potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
+    )
 
     def inference_loop(rng_key, kernel, initial_state, num_samples, num_chains):
         def one_step(states, rng_key):
@@ -186,15 +189,21 @@ def cross_validate(
         chains: number of chains per fold
         key: random generator state
     """
-    cv_hmc_kernel = cv_kernel(model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps)
+    cv_hmc_kernel = cv_kernel(
+        model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
+    )
 
     cv_chains = model.cv_folds * chains
-    start_idxs = jnp.repeat(jnp.expand_dims(jnp.arange(0, chains), axis=1), model.cv_folds, axis=1)
-    cv_folds = jnp.repeat(jnp.expand_dims(jnp.arange(0, model.cv_folds), axis=0), chains, axis=0)
+    start_idxs = jnp.repeat(
+        jnp.expand_dims(jnp.arange(0, chains), axis=1), model.cv_folds, axis=1
+    )
+    cv_folds = jnp.repeat(
+        jnp.expand_dims(jnp.arange(0, model.cv_folds), axis=0), chains, axis=0
+    )
     cv_initial_positions = {
         k: warmup.starting_values[k][start_idxs] for k in model.initial_value
     }
-    cv_initial_states = vmap(new_cv_state, in_axes=((0,1), None, (0,1)))(
+    cv_initial_states = vmap(new_cv_state, in_axes=((0, 1), None, (0, 1)))(
         cv_initial_positions, model.cv_potential, cv_folds
     )
 

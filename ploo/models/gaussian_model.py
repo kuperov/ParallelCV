@@ -38,10 +38,12 @@ class GaussianModel(ploo.CVModel):
         return log_prior + log_lik
 
     def cv_potential(self, param, cv_fold):
-        mu = param['mu']
-        sigma_orig = param['sigma']
-        sigma = self.sigma_transform(sigma_orig) 
-        return -self.log_joint(cv_fold, mu, sigma) - self.sigma_transform.log_det(sigma_orig)
+        mu = param["mu"]
+        sigma_orig = param["sigma"]
+        sigma = self.sigma_transform(sigma_orig)
+        return -self.log_joint(cv_fold, mu, sigma) - self.sigma_transform.log_det(
+            sigma_orig
+        )
 
     @property
     def initial_value(self):

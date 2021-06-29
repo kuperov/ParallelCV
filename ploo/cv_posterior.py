@@ -81,10 +81,10 @@ class CVPosterior(object):
     def post_density(self, par, separate=False):
         all_draws = self.cv_draws.position[par]
         if not separate:
-            all_draws = all_draws.reshape(all_draws.shape[0]*all_draws.shape[1])
+            all_draws = all_draws.reshape(all_draws.shape[0] * all_draws.shape[1])
         for i in range(all_draws.shape[-1]):
-            draws = all_draws[:,i]
+            draws = all_draws[:, i]
             kde = sst.gaussian_kde(draws)
             xs = np.linspace(min(draws), max(draws), 1_000)
             plt.plot(xs, kde(xs))
-        plt.title(f'{par} posterior density')
+        plt.title(f"{par} posterior density")
