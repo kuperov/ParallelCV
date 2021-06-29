@@ -9,7 +9,7 @@ nb: venv
 
 .PHONY: test
 test: venv
-	# run unti tests
+	# run unit tests
 	venv/bin/python -m unittest discover test
 
 venv:
