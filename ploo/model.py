@@ -105,3 +105,17 @@ class TransformedCVModel(CVModel):
         """Return total log determinant of transformation to constrained parameters
         """
         raise NotImplementedError()
+
+    def log_joint(self, cv_fold, **mcmc_params):
+        model_params = self.to_constrained_coordinates(mcmc_params)
+        lj = self.original_model.log_joint(cv_fold=cv_fold, **model_params)
+        ldet = self.log_det(model_params)
+        return lj + ldet
+
+    def log_pred(self, y_tilde, mcmc_params):
+        model_params = self.to_constrained_coordinates(mcmc_params)
+        return self.original_model.log_pred(y_tilde, model_params)        
+
+    def initial_value(self):
+        iv = self.original_model.initial_value
+        return self.to_unconstrained_coordinates(iv)

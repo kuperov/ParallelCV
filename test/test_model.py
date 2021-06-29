@@ -46,7 +46,7 @@ class _TransformedGaussianVarianceModel(TransformedCVModel):
         return unconstrained
 
     def to_constrained_coordinates(self, params):
-        constrained = {"sigma_sq": self.sigma_sq_transform.reverse(params["sigma_sq"])}
+        constrained = {"sigma_sq": self.sigma_sq_transform.to_constrained(params["sigma_sq"])}
         return constrained
 
     def log_det(self, params):
@@ -63,7 +63,7 @@ class TestModelParam(unittest.TestCase):
     def test_log_transform(self):
         lj_orig = self.orig.log_joint(-1, sigma_sq=2.5)
         lj_tf = self.tf.log_joint(-1, sigma_sq=jnp.log(2.5))
-        ldet = self.tf.log_det(sigma_sq=2.5)
+        ldet = self.tf.log_det({'sigma_sq': 2.5})
         self.assertEqual(lj_orig, lj_tf - ldet)
 
 
