@@ -15,10 +15,12 @@ def fixture(fname):
 class TestGaussian(unittest.TestCase):
     def test_log_lik(self):
         y = jnp.array([1.0, 0, -1.0])
+
         # original (not a cv fold)
         m = GaussianModel(y, mu_loc=0.0, mu_scale=1.0, sigma_shape=2.0, sigma_rate=2.0)
         lj = m.log_joint(cv_fold=-1, mu=0.7, sigma=1.8)
-        # gamma(a, rate) == gamma(a, scale=1/rate)
+
+        # NB gamma(a, rate) == gamma(a, scale=1/rate)
         ref_lp = st.norm(0.0, 1.0).logpdf(0.7) + st.gamma(
             a=2.0, scale=1.0 / 2.0
         ).logpdf(1.8)
@@ -35,9 +37,12 @@ class TestGaussian(unittest.TestCase):
         ref_ll = np.sum(st.norm(0.7, 1.8).logpdf(y[np.array([0, 2])]))
         self.assertAlmostEqual(lj, ref_lp + ref_ll, places=5)
 
+    # todo: test parameter transformation
+
     def test_hmc(self):
         y = GaussianModel.generate(N=200, mu=0.5, sigma=2, seed=42)
         gauss = GaussianModel(y)
+        # todo: pass in canned warmup
         post = run_hmc(
             gauss, draws=1000, warmup_steps=800, chains=4, seed=42, out=DummyProgress()
         )
@@ -47,7 +52,7 @@ class TestGaussian(unittest.TestCase):
         p0 = next(iter(gauss.parameters))
         self.assertEqual(post.post_draws.position[p0].shape, (1000, 4))
 
-        # I'm reliably informed Dan and Lauren really like code with hypothesis tests
+        # Because Dan and Lauren like hypothesis tests so much
         mu_draws = post.post_draws.position["mu"].reshape(4000)
         sigma_draws = post.post_draws.position["mu"].reshape(4000)
         stan_post = pandas.read_csv(fixture("gaussian_post.csv"))

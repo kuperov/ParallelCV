@@ -23,25 +23,14 @@ class CVModel(object):
     def cv_potential(self, param, cv_fold):
         """Potential for the given CV fold.
 
-        This version of the potential function leaves out a likelihood
-        contribution, according to the value of cv_fold.
+        We use index=-1 to indicate full-data likelihood (ie no CV folds dropped). If index >= 0, then
+        the potential function should leave out a likelihood contribution identified by the value of cv_fold.
 
         Keyword arguments:
             param: transformed model parameters
             cv_fold: an integer in the range 0..(self.cv_folds)
         """
         return -self.log_joint(cv_fold=cv_fold, **param)
-
-    def potential(self, param):
-        """Potential for the full-data model.
-
-        This version of the potential function includes all data, i.e. does
-        not omit any CV folds.
-
-        Keyword arguments:
-            param: transformed model parameters
-        """
-        return -self.log_joint(cv_fold=-1, **param)
 
     def log_joint(self, cv_fold=None, **kwargs):
         """Log joint: log p(args) + log p(data | args), leaving out the

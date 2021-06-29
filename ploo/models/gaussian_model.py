@@ -1,3 +1,4 @@
+from ploo.transforms import LogTransform
 from jax import random, numpy as jnp, jit
 import jax.scipy.stats as st
 from functools import partial
@@ -16,6 +17,7 @@ class GaussianModel(ploo.CVModel):
     """
 
     name = "Gaussian model"
+    sigma_transform = LogTransform()
 
     def __init__(
         self, y, mu_loc=0.0, mu_scale=1.0, sigma_shape=2.0, sigma_rate=2.0
@@ -34,6 +36,14 @@ class GaussianModel(ploo.CVModel):
         lik_contribs = st.norm.logpdf(self.y, loc=mu, scale=sigma)
         log_lik = jnp.where(self.folds != cv_fold, lik_contribs, 0).sum()
         return log_prior + log_lik
+
+    def cv_potential(self, param, cv_fold):
+        mu = param["mu"]
+        sigma_orig = param["sigma"]
+        sigma = self.sigma_transform(sigma_orig)
+        return -self.log_joint(cv_fold, mu, sigma) - self.sigma_transform.log_det(
+            sigma_orig
+        )
 
     @property
     def initial_value(self):
