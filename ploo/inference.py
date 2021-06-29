@@ -2,7 +2,7 @@ from typing import Dict, List, NamedTuple
 from jax.interpreters.xla import DeviceArray
 import jax.numpy as jnp
 from jax import random, lax, vmap
-from blackjax import nuts, hmc, stan_warmup
+from blackjax import nuts, stan_warmup
 from datetime import datetime
 
 from .model import CVModel
@@ -19,9 +19,24 @@ class WarmupResults(NamedTuple):
     """
 
     step_size: float
-    mass_matrix: jnp.ndarray
+    mass_matrix: DeviceArray
     starting_values: List[Dict]
     int_steps: int
+
+    @property
+    def code(self) -> str:
+        """Python code for recreating this warmup output"""
+        da2c = lambda a: (
+            str(a).replace("DeviceArray", "jnp.array").replace(", dtype=float32", "")
+        )
+        sv_code = da2c(self.starting_values)
+        mm_code = da2c(jnp.array(self.mass_matrix))
+        py = f"""WarmupResults(
+    step_size={self.step_size},
+    mass_matrix=jnp.array({mm_code}),
+    starting_values={sv_code},
+    int_steps={self.int_steps})"""
+        return py
 
 
 def run_hmc(
@@ -62,7 +77,7 @@ def run_hmc(
 
     print(f"Step 2/3. Running main inference with {chains} chains...")
     timer = Timer()
-    key, states = full_data_inference(model, warmup_results, draws, chains, key)
+    states = full_data_inference(model, warmup_results, draws, chains, key)
     print(
         f"          {chains*draws:,} HMC draws took {timer}"
         f" ({chains*draws/timer.sec:,.0f} iter/sec)."
@@ -86,17 +101,29 @@ def run_hmc(
 def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
     """Run Stan warmup
 
+    We sample initial positions from second half of the Stan warmup, running
+    NUTS. Yes I know this is awful, awful, awful. Please don't judge, we'll
+    replace it with a shiny new warmup scheme that will surely never have any
+    problems ever.
+
     Keyword args:
         model: model to work with
         warmup_steps: number of warmup iterations
         num_start_pos: number of starting positions to extract
         key: random generator state
-    """
-    assert jnp.isfinite(model.potential(model.initial_value)), "Invalid initial value"
 
-    initial_state = nuts.new_state(model.initial_value, model.potential)
+    Returns:
+        WarmupResults object containing step size, mass matrix, initial positions,
+        and integration steps.
+    """
+    assert jnp.isfinite(
+        model.cv_potential(model.initial_value, -1)
+    ), "Invalid initial value"
+
+    potential = lambda p: model.cv_potential(p, cv_fold=-1)  # full-data potential
+    initial_state = nuts.new_state(model.initial_value, potential)
     kernel_factory = lambda step_size, inverse_mass_matrix: nuts.kernel(
-        model.potential, step_size, inverse_mass_matrix
+        potential, step_size, inverse_mass_matrix
     )
     state, (step_size, mass_matrix), adapt_chain = stan_warmup.run(
         key,
@@ -110,8 +137,7 @@ def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
     assert jnp.isfinite(step_size), "Woops, step size is not finite."
 
     # Sample the initial values uniformly from the second half of the
-    # warmup chain. We need as many initial values as we have independent
-    # chains (CV fold posteriors will re-use the set of initial values)
+    # warmup chain
     varname = next(iter(hmc_warmup_state.position))
     warmup_steps = hmc_warmup_state.position[varname].shape[0]
     key, subkey = random.split(key)
@@ -125,9 +151,7 @@ def warmup(model, warmup_steps, num_start_pos, key) -> WarmupResults:
         k: hmc_warmup_state.position[k][start_idxs] for k in model.initial_value
     }
 
-    # FIXME: eventually we want median of NUTS draws from actual inference,
-    #        because we're actually capturing different warmup stages
-    # TODO:  no, scratch that, let use a grid search parallel warmup instead
+    # take median of NUTS integration steps for static path length
     int_steps = int(jnp.median(nuts_info.integration_steps[(warmup_steps // 2) :]))
 
     return WarmupResults(step_size, mass_matrix, initial_values, int_steps)
@@ -143,9 +167,6 @@ def full_data_inference(model, warmup, draws, chains, key):
         chains: number of chains
         key: random generator state
     """
-    hmc_kernel = hmc.kernel(
-        model.potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
-    )
 
     def inference_loop(rng_key, kernel, initial_state, num_samples, num_chains):
         def one_step(states, rng_key):
@@ -157,18 +178,20 @@ def full_data_inference(model, warmup, draws, chains, key):
         _, states = lax.scan(one_step, initial_state, keys)
         return states
 
-    # sample initial positions from second half of warmup
-    # yes I know this is awful, please don't judge me, we're going to replace it
-    # with a shiny new warmup scheme that will never have any problems ever
+    # NB: the special CV fold index of -1 indicates full-data inference
     key, subkey = random.split(key)
-    initial_states = vmap(hmc.new_state, in_axes=(0, None))(
-        warmup.starting_values, model.potential
+    # one initial state per chain
+    initial_states = vmap(new_cv_state, in_axes=(0, None, None))(
+        warmup.starting_values, model.cv_potential, -1
+    )
+    kernel = cv_kernel(
+        model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
     )
     states = inference_loop(
-        key, hmc_kernel, initial_states, num_samples=draws, num_chains=chains
+        key, kernel, initial_states, num_samples=draws, num_chains=chains
     )
 
-    return key, states
+    return states
 
 
 def cross_validate(
@@ -203,7 +226,7 @@ def cross_validate(
     cv_initial_positions = {
         k: warmup.starting_values[k][start_idxs] for k in model.initial_value
     }
-    cv_initial_states = vmap(new_cv_state, in_axes=((0, 1), None, (0, 1)))(
+    cv_initial_states = vmap(new_cv_state, in_axes=(0, None, (0, 1)))(
         cv_initial_positions, model.cv_potential, cv_folds
     )
 
@@ -218,7 +241,7 @@ def cross_validate(
         return states
 
     cv_states = cv_inference_loop(
-        key, cv_hmc_kernel, cv_initial_states, num_samples=draws, num_chains=cv_chains
+        key, cv_hmc_kernel, cv_initial_states, draws, cv_chains
     )
 
     return cv_states
