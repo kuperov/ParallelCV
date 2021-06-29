@@ -3,10 +3,9 @@ from jax.interpreters.xla import DeviceArray
 import jax.numpy as jnp
 from jax import random, lax, vmap
 from blackjax import nuts, stan_warmup
-from datetime import datetime
 
 from .model import CVModel
-from .progress import Progress
+from .util import Progress
 from .hmc import cv_kernel, new_cv_state
 from .cv_posterior import CVPosterior
 from .util import Timer
@@ -25,7 +24,10 @@ class WarmupResults(NamedTuple):
 
     @property
     def code(self) -> str:
-        """Python code for recreating this warmup output"""
+        """Python code for recreating this warmup output.
+        
+        Use this to create reproducible tests that don't take too ong to run.
+        """
         da2c = lambda a: (
             str(a).replace("DeviceArray", "jnp.array").replace(", dtype=float32", "")
         )
@@ -62,8 +64,8 @@ def run_hmc(
     rng_key = random.PRNGKey(seed)
     warmup_key, inference_key, cv_key = random.split(rng_key, 3)
 
-    print("The Cross-Validatory Sledgehammer")
-    print("=================================\n")
+    print("The Cross-Validatory Sledgehammer™")
+    print("==================================\n")
 
     if warmup_results:
         print("Step 1/3. Skipping warmup")

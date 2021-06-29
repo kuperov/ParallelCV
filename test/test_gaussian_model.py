@@ -53,13 +53,14 @@ class TestGaussian(unittest.TestCase):
         self.assertEqual(post.post_draws.position[p0].shape, (1000, 4))
 
         # Because Dan and Lauren like hypothesis tests so much
-        mu_draws = post.post_draws.position["mu"].reshape(4000)
-        sigma_draws = post.post_draws.position["mu"].reshape(4000)
+        mu_draws = post.post_draws.position["mu"].reshape((-1,))
+        sigma_draws = post.post_draws.position["mu"].reshape(-1,)
         stan_post = pandas.read_csv(fixture("gaussian_post.csv"))
         ks_mu = st.kstest(stan_post["mu"], mu_draws)
         ks_sigma = st.kstest(stan_post["sigma"], sigma_draws)
-        self.assertGreater(ks_mu.pvalue, 1e-3)
-        self.assertGreater(ks_sigma.pvalue, 1e-3)
+        alpha = 1e-3  # rate at which our unit tests randomly fail
+        self.assertGreater(ks_mu.pvalue, alpha/2)
+        self.assertGreater(ks_sigma.pvalue, alpha/2)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,6 @@ from .inference import (
     CVPosterior,
     WarmupResults,
 )
-from .progress import Progress, DummyProgress
+from .util import Progress, DummyProgress
 from .model import CVModel
 from .models import *
