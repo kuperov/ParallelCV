@@ -168,16 +168,6 @@ def full_data_inference(model, warmup, draws, chains, rng_key):
         rng_key: random generator state
     """
 
-    def inference_loop(rng_key, kernel, initial_state, num_samples, num_chains):
-        def one_step(states, rng_key):
-            keys = random.split(rng_key, num_chains)
-            states, _ = vmap(kernel)(keys, states)
-            return states, states
-
-        keys = random.split(rng_key, num_samples)
-        _, states = lax.scan(one_step, initial_state, keys)
-        return states
-
     # NB: the special CV fold index of -1 indicates full-data inference
     # one initial state per chain
     initial_states = vmap(new_cv_state, in_axes=(0, None, None))(
@@ -186,9 +176,14 @@ def full_data_inference(model, warmup, draws, chains, rng_key):
     kernel = cv_kernel(
         model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
     )
-    states = inference_loop(
-        rng_key, kernel, initial_states, num_samples=draws, num_chains=chains
-    )
+
+    def one_step(states, rng_key):
+        keys = random.split(rng_key, chains)
+        states, _ = vmap(kernel)(keys, states)
+        return states, states
+
+    keys = random.split(rng_key, draws)
+    _, states = lax.scan(one_step, initial_states, keys)
 
     return states
 
@@ -219,9 +214,11 @@ def cross_validate(
         model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
     )
 
-    # start each fold's MCMC chains with the same set of initial states
-    one_fold_initial_states = vmap(new_cv_state, (0, None, None))
-    cv_initial_states = vmap(one_fold_initial_states, (None, None, 0))(
+    # We start each fold's MCMC chains with the same set of initial states.
+    # fold_initial_states(states, potential, fold_no) generates a 1D array of length chains
+    fold_initial_states = vmap(new_cv_state, (0, None, None))
+    # cv_initial_states is 2D chains*folds array
+    cv_initial_states = vmap(fold_initial_states, (None, None, 0))(
         warmup.starting_values, model.cv_potential, jnp.arange(0, model.cv_folds)
     )
 
