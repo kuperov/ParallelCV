@@ -20,15 +20,4 @@ Check everything is working by running the unit tests:
 
 Hint: at the time of writing, everything is not working.
 
-Roadmap
--------
-
-This list makes me feel tired just looking at it.
-
-  * [x] Black-box HMC inference using Stan warmup
-  * [x] Basic posterior summary output for experiments
-  * [ ] LOO implementation using parallel chains
-  * [ ] Functions for comparing models with CV
-  * [ ] Inference for multiple models in parallel
-  * [ ] LOO for multiple models in parallel
-  * [ ] PSIS implementation as benchmark
+Roadmap has been moved to [Github issues](https://github.com/kuperov/ploo/labels/enhancement)
