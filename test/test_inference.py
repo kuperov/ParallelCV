@@ -1,18 +1,12 @@
 from jax.interpreters.xla import DeviceArray
-import unittest, os
+import unittest
 
 from jax import numpy as jnp, random
-from scipy import stats as st
-import numpy as np
-import pandas
 
 from ploo import (
-    run_hmc,
     warmup,
     full_data_inference,
     cross_validate,
-    CVPosterior,
-    DummyProgress,
     GaussianModel,
     WarmupResults,
 )
@@ -55,6 +49,7 @@ class TestInference(unittest.TestCase):
         states = cross_validate(
             self.gauss, self.wu, draws=1e3, chains=2, rng_key=self.key
         )
+        self.assertIsNotNone(states)
 
 
 if __name__ == "__main__":

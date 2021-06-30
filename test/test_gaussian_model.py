@@ -1,4 +1,6 @@
-import unittest, os
+from ploo.inference import WarmupResults
+import unittest
+import os
 
 from jax import numpy as jnp
 from scipy import stats as st
@@ -18,8 +20,8 @@ class TestGaussian(unittest.TestCase):
 
         # original (not a cv fold)
         m = GaussianModel(y, mu_loc=0.0, mu_scale=1.0, sigma_shape=2.0, sigma_rate=2.0)
-        lj = m.log_joint(cv_fold=-1, mu=0.7, sigma=1.8)
-
+        param = {"mu": 0.7, "sigma": 1.8}
+        lj = m.log_likelihood(param, -1) + m.log_prior(param)
         # NB gamma(a, rate) == gamma(a, scale=1/rate)
         ref_lp = st.norm(0.0, 1.0).logpdf(0.7) + st.gamma(
             a=2.0, scale=1.0 / 2.0
@@ -28,12 +30,12 @@ class TestGaussian(unittest.TestCase):
         self.assertAlmostEqual(lj, ref_lp + ref_ll, places=5)
 
         # first cv fold (index 0)
-        lj = m.log_joint(cv_fold=0, mu=0.7, sigma=1.8)
+        lj = m.log_likelihood(param, 0) + m.log_prior(param)
         ref_ll = np.sum(st.norm(0.7, 1.8).logpdf(y[1:3]))
         self.assertAlmostEqual(lj, ref_lp + ref_ll, places=5)
 
         # second cv fold (index 1)
-        lj = m.log_joint(cv_fold=1, mu=0.7, sigma=1.8)
+        lj = m.log_likelihood(param, 1) + m.log_prior(param)
         ref_ll = np.sum(st.norm(0.7, 1.8).logpdf(y[np.array([0, 2])]))
         self.assertAlmostEqual(lj, ref_lp + ref_ll, places=5)
 
@@ -42,14 +44,28 @@ class TestGaussian(unittest.TestCase):
     def test_hmc(self):
         y = GaussianModel.generate(N=200, mu=0.5, sigma=2, seed=42)
         gauss = GaussianModel(y)
-        # todo: pass in canned warmup
+        warmup = WarmupResults(
+            step_size=1.0877529382705688,
+            mass_matrix=jnp.array([0.01624156, 0.00898136]),
+            starting_values={
+                "mu": jnp.array([0.6022406, 0.7719638, 0.86546046, 0.8445248]),
+                "sigma": jnp.array([1.885933, 1.8219403, 1.7975305, 1.882911]),
+            },
+            int_steps=3,
+        )
         post = run_hmc(
-            gauss, draws=1000, warmup_steps=800, chains=4, seed=42, out=DummyProgress()
+            gauss,
+            draws=1000,
+            warmup_steps=800,
+            chains=4,
+            seed=42,
+            out=DummyProgress(),
+            warmup_results=warmup,
         )
         self.assertIsInstance(post, CVPosterior)
         self.assertEqual(post.seed, 42)
         self.assertIs(gauss, post.model)
-        p0 = next(iter(gauss.parameters))
+        p0 = next(iter(gauss.parameters()))
         self.assertEqual(post.post_draws.position[p0].shape, (1000, 4))
 
         # Because Dan and Lauren like hypothesis tests so much

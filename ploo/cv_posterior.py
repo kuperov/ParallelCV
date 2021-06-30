@@ -1,11 +1,9 @@
-from typing import List
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from tabulate import tabulate
 
 from .model import CVModel
 
-from jax.scipy import stats as st
 from scipy import stats as sst
 import numpy as np
 
@@ -20,12 +18,15 @@ class CVPosterior(object):
         seed: seed used when invoking inference
     """
 
-    def __init__(self, model: CVModel, post_draws, cv_draws, seed, chains) -> None:
+    def __init__(
+        self, model: CVModel, post_draws, cv_draws, seed, chains, warmup
+    ) -> None:
         self.model = model
         self.post_draws = post_draws
         self.cv_draws = cv_draws
         self.seed = seed
         self.chains = chains
+        self.warmup = warmup
 
     def __repr__(self) -> str:
         title = f"{self.model.name} inference summary"
@@ -105,5 +106,5 @@ class CVPosterior(object):
                     kde = sst.gaussian_kde(draws)
                     xs = np.linspace(min(draws), max(draws), 1_000)
                     ax.plot(xs, kde(xs))
-                except:
+                except Exception:
                     print(f"Error evaluating kde for fold {fold}, chain {i}")

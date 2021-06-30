@@ -1,3 +1,4 @@
+# flake8: noqa
 from .inference import (
     run_hmc,
     warmup,
@@ -7,6 +8,6 @@ from .inference import (
     WarmupResults,
 )
 from .util import Progress, DummyProgress
-from .model import CVModel, TransformedCVModel
+from .model import CVModel
 from .transforms import LogTransform, IntervalTransform
 from .models import *
