@@ -4,3 +4,5 @@ matplotlib
 black
 pystan
 pandas
+flake8
+flake8-bugbear

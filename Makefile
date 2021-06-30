@@ -28,6 +28,14 @@ black:
 	# format code
 	venv/bin/black ploo test
 
+lint:
+	venv/bin/black --check ploo test
+	venv/bin/flake8 ploo test
+
+init-hooks:
+	# Set up git commit hooks. Warning: will clobber existing hooks.
+	cp scripts/git-hooks/* .git/hooks
+
 clean:
 	@echo Deleting build artefacts. You should manually remove venv.
 	find ploo test -name __pycache__ | xargs rm -r
