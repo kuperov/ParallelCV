@@ -32,9 +32,11 @@ lint:
 	venv/bin/black --check ploo test
 	venv/bin/flake8 ploo test
 
-init-hooks:
-	# Set up git commit hooks. Warning: will clobber existing hooks.
-	cp scripts/git-hooks/* .git/hooks
+config: venv
+	# Configure the development environment, if not already
+	cp --no-clobber -r scripts/vscode .vscode
+	# Set up git commit hooks, if not already
+	cp --no-clobber scripts/git-hooks/* .git/hooks
 
 clean:
 	@echo Deleting build artefacts. You should manually remove venv.
