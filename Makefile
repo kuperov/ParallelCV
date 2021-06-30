@@ -27,3 +27,8 @@ notebook_keypair.ignore/notebook_keypair.rsa:
 black:
 	# format code
 	venv/bin/black ploo test
+
+clean:
+	@echo Deleting build artefacts. You should manually remove venv.
+	find ploo test -name __pycache__ | xargs rm -r
+	rm -rf .ipynb_checkpoints notebooks/.ipynb_checkpoints .vscode build ploo.egg-info
