@@ -15,6 +15,12 @@ def fixture(fname):
 
 
 class TestGaussian(unittest.TestCase):
+    def setUp(self) -> None:
+        self.y = jnp.array([1.0, 0, -1.0])
+        self.m = GaussianModel(
+            self.y, mu_loc=0.0, mu_scale=1.0, sigma_shape=2.0, sigma_rate=2.0
+        )
+
     def test_log_lik(self):
         y = jnp.array([1.0, 0, -1.0])
 
@@ -39,10 +45,14 @@ class TestGaussian(unittest.TestCase):
         ref_ll = np.sum(st.norm(0.7, 1.8).logpdf(y[np.array([0, 2])]))
         self.assertAlmostEqual(lj, ref_lp + ref_ll, places=5)
 
-    # todo: test parameter transformation
+    def test_transforms(self):
+        mp = {"mu": 0.5, "sigma": 2.5}
+        tp = {"mu": 0.5, "sigma": jnp.log(2.5)}
+        self.assertEqual(mp, self.m.to_model_params(tp))
+        self.assertEqual(tp, self.m.to_inference_params(mp))
 
     def test_hmc(self):
-        y = GaussianModel.generate(N=200, mu=0.5, sigma=2, seed=42)
+        y = GaussianModel.generate(N=200, mu=0.5, sigma=2.0, seed=42)
         gauss = GaussianModel(y)
         warmup = WarmupResults(
             step_size=1.0877529382705688,
@@ -67,6 +77,13 @@ class TestGaussian(unittest.TestCase):
         self.assertIs(gauss, post.model)
         p0 = next(iter(gauss.parameters()))
         self.assertEqual(post.post_draws.position[p0].shape, (1000, 4))
+
+        self.assertAlmostEqual(
+            jnp.mean(y), jnp.mean(post.post_draws.position["mu"]), places=1
+        )
+        self.assertAlmostEqual(
+            jnp.std(y), jnp.mean(post.post_draws.position["sigma"]), places=1
+        )
 
         # Because Dan and Lauren like hypothesis tests so much
         mu_draws = post.post_draws.position["mu"].reshape((-1,))

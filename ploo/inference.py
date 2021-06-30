@@ -197,6 +197,15 @@ def full_data_inference(
     draw_keys = random.split(rng_key, draws)
     _, states = lax.scan(one_step, initial_states, draw_keys)
 
+    # map positions back to model coordinates
+    position_model = vmap(model.to_model_params)(states.position)
+    states = CVHMCState(
+        position_model,
+        states.potential_energy,
+        states.potential_energy_grad,
+        states.cv_fold,
+    )
+
     return states
 
 
@@ -248,5 +257,14 @@ def cross_validate(
 
     draw_keys = random.split(rng_key, draws)
     _, states = lax.scan(one_step, cv_initial_states, draw_keys)
+
+    # map positions back to model coordinates
+    position_model = vmap(model.to_model_params)(states.position)
+    states = CVHMCState(
+        position_model,
+        states.potential_energy,
+        states.potential_energy_grad,
+        states.cv_fold,
+    )
 
     return states

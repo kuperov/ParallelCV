@@ -1,4 +1,4 @@
-from ploo.model import ModelParams
+from ploo.model import InfParams, ModelParams
 from ploo.transforms import LogTransform
 from jax import random, numpy as jnp
 import jax.scipy.stats as st
@@ -55,6 +55,23 @@ class GaussianModel(ploo.CVModel):
 
     def cv_folds(self):
         return len(self.y)
+
+    def to_model_params(self, inf_params: InfParams) -> ModelParams:
+        model_params = {
+            "mu": inf_params["mu"],
+            "sigma": self.sigma_transform.to_constrained(inf_params["sigma"]),
+        }
+        return model_params
+
+    def to_inference_params(self, model_params: ModelParams) -> InfParams:
+        inf_params = {
+            "mu": model_params["mu"],
+            "sigma": self.sigma_transform.to_unconstrained(model_params["sigma"]),
+        }
+        return inf_params
+
+    def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
+        return self.sigma_transform.log_det(model_params["sigma"])
 
     @classmethod
     def generate(cls, N=200, mu=0.5, sigma=2.0, seed=42):

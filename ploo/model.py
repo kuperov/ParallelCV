@@ -97,7 +97,7 @@ class CVModel(object):
             cv_fold:    an integer corresponding to a CV fold
         """
         model_params = self.to_model_params(inf_params)
-        llik = self.log_likelihood(cv_fold=cv_fold, model_params=model_params)
+        llik = self.log_likelihood(model_params=model_params, cv_fold=cv_fold)
         lprior = self.log_prior(model_params=model_params)
         ldet = self.log_det(model_params=model_params)
         return -llik - lprior - ldet
@@ -131,7 +131,7 @@ class CVModel(object):
             dictionary of parameters with same structure as params, but
             in unconstrained (sampler) parameter space.
         """
-        return model_params
+        raise NotImplementedError()
 
     def to_model_params(self, inf_params: InfParams) -> ModelParams:
         """Convert unconstrained (inference) params to constrained (model) parameter space
@@ -144,7 +144,7 @@ class CVModel(object):
             dictionary of parameters with same structure as inf_params, but
             in constrained (model) parameter space.
         """
-        return inf_params
+        raise NotImplementedError()
 
     def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
         """Return total log determinant of transformation to constrained parameters
@@ -155,7 +155,7 @@ class CVModel(object):
         Returns:
             dictionary of parameters with same structure as model_params
         """
-        return 0
+        raise NotImplementedError()
 
     def log_pred(self, cv_fold, mcmc_params):
         model_params = self.to_constrained_coordinates(mcmc_params)

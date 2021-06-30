@@ -69,9 +69,9 @@ class CVPosterior(object):
 
     def cv_trace_plots(self, par, ncols=4, figsize=(40, 80)) -> None:
         """Plot trace plots for every single cross validation fold."""
-        rows = int(jnp.ceil(self.model.cv_folds / ncols))
+        rows = int(jnp.ceil(self.model.cv_folds() / ncols))
         fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
-        for fold, ax in zip(range(self.model.cv_folds), axes.ravel()):
+        for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
             ax.plot(self.cv_draws.position[par][:, chain_indexes])
 
@@ -93,9 +93,9 @@ class CVPosterior(object):
 
     def cv_post_densities(self, par, combine=False, ncols=4, figsize=(40, 80)):
         """Small-multiple kernel densities for cross-validation posteriors."""
-        rows = int(jnp.ceil(self.model.cv_folds / ncols))
+        rows = int(jnp.ceil(self.model.cv_folds() / ncols))
         fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
-        for fold, ax in zip(range(self.model.cv_folds), axes.ravel()):
+        for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
             all_draws = self.cv_draws.position[par][:, chain_indexes]
             if combine:
