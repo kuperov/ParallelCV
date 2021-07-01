@@ -89,8 +89,9 @@ class CVModel(object):
     def cv_potential(self, inf_params: InfParams, cv_fold: int) -> jnp.DeviceArray:
         """Potential for the given CV fold.
 
-        We use index=-1 to indicate full-data likelihood (ie no CV folds dropped). If index >= 0, then
-        the potential function should leave out a likelihood contribution identified by the value of cv_fold.
+        We use index=-1 to indicate full-data likelihood (ie no CV folds dropped). If
+        index >= 0, then the potential function should leave out a likelihood
+        contribution identified by the value of cv_fold.
 
         Keyword arguments:
             inf_params: model parameters in inference (unconstrained) space
@@ -118,14 +119,14 @@ class CVModel(object):
         raise NotImplementedError()
 
     def to_inference_params(self, model_params: ModelParams) -> InfParams:
-        """Convert constrained (model) params to unconstrained (sampler) parameter space
+        """Convert constrained (model) params to unconstrained (sampler) space
 
         The argument model_params is expressed in constrained (model) coordinate
         space.
 
         Keyword arguments:
-            model_params: dictionary of parameters in constrained (model) parameter
-                          space, keyed by name
+            model_params: dictionary of parameters in constrained (model)
+                          parameter space, keyed by name
 
         Returns:
             dictionary of parameters with same structure as params, but

@@ -1,4 +1,3 @@
-from ploo.inference import WarmupResults
 import unittest
 import os
 
@@ -54,15 +53,6 @@ class TestGaussian(unittest.TestCase):
     def test_hmc(self):
         y = GaussianModel.generate(N=200, mu=0.5, sigma=2.0, seed=42)
         gauss = GaussianModel(y)
-        warmup = WarmupResults(
-            step_size=1.0877529382705688,
-            mass_matrix=jnp.array([0.01624156, 0.00898136]),
-            starting_values={
-                "mu": jnp.array([0.6022406, 0.7719638, 0.86546046, 0.8445248]),
-                "sigma": jnp.array([1.885933, 1.8219403, 1.7975305, 1.882911]),
-            },
-            int_steps=3,
-        )
         post = run_hmc(
             gauss,
             draws=1000,
@@ -70,7 +60,6 @@ class TestGaussian(unittest.TestCase):
             chains=4,
             seed=42,
             out=DummyProgress(),
-            # warmup_results=warmup,
         )
         self.assertIsInstance(post, CVPosterior)
         self.assertEqual(post.seed, 42)
@@ -86,8 +75,9 @@ class TestGaussian(unittest.TestCase):
         )
 
         # Because Dan and Lauren like hypothesis tests so much
-        mu_draws = post.post_draws.position["mu"].reshape((-1,))
-        sigma_draws = post.post_draws.position["mu"].reshape(
+        draws = post.post_draws.position
+        mu_draws = draws["mu"].reshape((-1,))
+        sigma_draws = draws["sigma"].reshape(
             -1,
         )
         stan_post = pandas.read_csv(fixture("gaussian_post.csv"))
