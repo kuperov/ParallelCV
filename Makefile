@@ -27,3 +27,18 @@ notebook_keypair.ignore/notebook_keypair.rsa:
 black:
 	# format code
 	venv/bin/black ploo test
+
+lint:
+	venv/bin/black --check ploo test
+	venv/bin/flake8 ploo test
+
+config: venv
+	# Configure the development environment, if not already
+	cp --no-clobber -r scripts/vscode .vscode
+	# Set up git commit hooks, if not already
+	cp --no-clobber scripts/git-hooks/* .git/hooks
+
+clean:
+	@echo Deleting build artefacts. You should manually remove venv.
+	find ploo test -name __pycache__ | xargs rm -r
+	rm -rf .ipynb_checkpoints notebooks/.ipynb_checkpoints .vscode build ploo.egg-info

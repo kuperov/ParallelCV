@@ -3,6 +3,8 @@ ploo: Parallel Brute Force LOO-CV
 
 This is an experiment to try and implement LOO-CV with parallel processing on a GPU.
 
+The project roadmap has been moved to [Github issues](https://github.com/kuperov/ploo/labels/enhancement)
+
 Setting up
 ----------
 
@@ -12,12 +14,11 @@ On a reasonable OS you should be able to create the virtual environment that con
 
     make venv
 
-If you must run Windows, use WSL.
+If you must use an unreasonable OS like Windows, use WSL.
 
 Check everything is working by running the unit tests:
 
     make test
 
-Hint: at the time of writing, everything is not working.
+Hint: not everything is working.
 
-Roadmap has been moved to [Github issues](https://github.com/kuperov/ploo/labels/enhancement)

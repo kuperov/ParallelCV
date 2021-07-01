@@ -6,7 +6,7 @@ import ploo
 
 
 class AR1(ploo.CVModel):
-    """Simple AR(1) model with LOO
+    r"""Simple AR(1) model with LOO
 
     $$ y_t = \mu + \rho y_{t-1} + \sigma \varepsilon_t, \qquad t=1,\dots,(N-1) $$
     $$ y_0 = \frac{\mu}{1-\rho}+\varepsilon $$

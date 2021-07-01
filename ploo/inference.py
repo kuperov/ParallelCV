@@ -3,11 +3,10 @@ from jax.interpreters.xla import DeviceArray
 import jax.numpy as jnp
 from jax import random, lax, vmap
 from blackjax import nuts, stan_warmup
-from datetime import datetime
 
 from .model import CVModel
-from .progress import Progress
-from .hmc import cv_kernel, new_cv_state
+from .util import Progress
+from .hmc import CVHMCState, cv_kernel, new_cv_state
 from .cv_posterior import CVPosterior
 from .util import Timer
 
@@ -25,17 +24,27 @@ class WarmupResults(NamedTuple):
 
     @property
     def code(self) -> str:
-        """Python code for recreating this warmup output"""
-        da2c = lambda a: (
-            str(a).replace("DeviceArray", "jnp.array").replace(", dtype=float32", "")
-        )
+        """Python code for recreating this warmup output.
+
+        Use this to create reproducible tests that don't take too ong to run.
+        """
+
+        def da2c(a):
+            return (
+                str(a)
+                .replace("DeviceArray", "jnp.array")
+                .replace(", dtype=float32", "")
+            )
+
         sv_code = da2c(self.starting_values)
         mm_code = da2c(jnp.array(self.mass_matrix))
-        py = f"""WarmupResults(
-    step_size={self.step_size},
-    mass_matrix=jnp.array({mm_code}),
-    starting_values={sv_code},
-    int_steps={self.int_steps})"""
+        py = (
+            "WarmupResults(\n"
+            f"    step_size={self.step_size},\n"
+            f"    mass_matrix=jnp.array({mm_code}),\n"
+            f"    starting_values={sv_code},\n"
+            f"    int_steps={self.int_steps})"
+        )
         return py
 
 
@@ -51,24 +60,24 @@ def run_hmc(
     """Run HMC after using Stan warmup with NUTS.
 
     Keyword arguments:
-        model: model, including data, to run inference on
-        draws: number of draws per chain
+        model:        model, including data, to run inference on
+        draws:        number of draws per chain
         warmup_steps: number of Stan warmup steps to run
-        chains: number of chains for main inference step
-        seed: random seed
-        out: progress indicator
+        chains:       number of chains for main inference step
+        seed:         random seed
+        out:          progress indicator
     """
     print = (out or Progress()).print
     rng_key = random.PRNGKey(seed)
     warmup_key, inference_key, cv_key = random.split(rng_key, 3)
 
-    print("The Cross-Validatory Sledgehammer")
-    print("=================================\n")
+    print("The Cross-Validatory Sledgehammer™")
+    print("==================================\n")
 
     if warmup_results:
         print("Step 1/3. Skipping warmup")
     else:
-        print(f"Step 1/3. Starting Stan warmup using NUTS...")
+        print("Step 1/3. Starting Stan warmup using NUTS...")
         timer = Timer()
         warmup_results = warmup(model, warmup_steps, chains, warmup_key)
         print(
@@ -85,9 +94,9 @@ def run_hmc(
     )
 
     timer = Timer()
-    cv_chains = chains * model.cv_folds
+    cv_chains = chains * model.cv_folds()
     print(
-        f"Step 3/3. Cross-validation with {model.cv_folds:,} folds "
+        f"Step 3/3. Cross-validation with {model.cv_folds():,} folds "
         f"using {cv_chains:,} chains..."
     )
     cv_states = cross_validate(model, warmup_results, draws, chains, cv_key)
@@ -96,10 +105,10 @@ def run_hmc(
         f" ({cv_chains*draws/timer.sec:,.0f} iter/sec)."
     )
 
-    return CVPosterior(model, states, cv_states, seed, chains)
+    return CVPosterior(model, states, cv_states, seed, chains, warmup_results)
 
 
-def warmup(model, warmup_steps, num_start_pos, rng_key) -> WarmupResults:
+def warmup(model: CVModel, warmup_steps, num_start_pos, rng_key) -> WarmupResults:
     """Run Stan warmup
 
     We sample initial positions from second half of the Stan warmup, running
@@ -108,24 +117,26 @@ def warmup(model, warmup_steps, num_start_pos, rng_key) -> WarmupResults:
     problems ever.
 
     Keyword args:
-        model: model to work with
-        warmup_steps: number of warmup iterations
+        model:         model to work with
+        warmup_steps:  number of warmup iterations
         num_start_pos: number of starting positions to extract
-        key: random generator state
+        rng_key:       random generator state
 
     Returns:
         WarmupResults object containing step size, mass matrix, initial positions,
         and integration steps.
     """
-    assert jnp.isfinite(
-        model.cv_potential(model.initial_value, -1)
-    ), "Invalid initial value"
+    initval = model.to_inference_params(model.initial_value())
+    assert jnp.isfinite(model.cv_potential(initval, -1)), "Invalid initial value"
     warmup_key, start_val_key = random.split(rng_key)
-    potential = lambda p: model.cv_potential(p, cv_fold=-1)  # full-data potential
-    initial_state = nuts.new_state(model.initial_value, potential)
-    kernel_factory = lambda step_size, inverse_mass_matrix: nuts.kernel(
-        potential, step_size, inverse_mass_matrix
-    )
+
+    def potential(param):
+        return model.cv_potential(param, cv_fold=-1)  # full-data potential
+
+    def kernel_factory(step_size, inverse_mass_matrix):
+        return nuts.kernel(potential, step_size, inverse_mass_matrix)
+
+    initial_state = nuts.new_state(initval, potential)
     state, (step_size, mass_matrix), adapt_chain = stan_warmup.run(
         warmup_key,
         kernel_factory,
@@ -148,7 +159,7 @@ def warmup(model, warmup_steps, num_start_pos, rng_key) -> WarmupResults:
         replace=True,
     )
     initial_values = {
-        k: hmc_warmup_state.position[k][start_idxs] for k in model.initial_value
+        k: hmc_warmup_state.position[k][start_idxs] for k in model.initial_value()
     }
 
     # take median of NUTS integration steps for static path length
@@ -159,14 +170,14 @@ def warmup(model, warmup_steps, num_start_pos, rng_key) -> WarmupResults:
 
 def full_data_inference(
     model: CVModel, warmup: WarmupResults, draws: int, chains: int, rng_key: DeviceArray
-):
+) -> CVHMCState:
     """Full-data inference on model with no CV folds dropped.
 
     Keyword args:
-        model: model to perform inference on
-        warmup: results from warmup procedure
-        draws: number of posterior draws per chain
-        chains: number of chains
+        model:   model to perform inference on
+        warmup:  results from warmup procedure
+        draws:   number of posterior draws per chain
+        chains:  number of chains
         rng_key: random generator state
     """
     # NB: the special CV fold index of -1 indicates full-data inference
@@ -185,6 +196,15 @@ def full_data_inference(
 
     draw_keys = random.split(rng_key, draws)
     _, states = lax.scan(one_step, initial_states, draw_keys)
+
+    # map positions back to model coordinates
+    position_model = vmap(model.to_model_params)(states.position)
+    states = CVHMCState(
+        position_model,
+        states.potential_energy,
+        states.potential_energy_grad,
+        states.cv_fold,
+    )
 
     return states
 
@@ -211,7 +231,7 @@ def cross_validate(
         chains: number of chains per fold
         key: random generator state
     """
-    cv_folds = model.cv_folds
+    cv_folds = model.cv_folds()
     # chain_indexes = [0, 1, 2, 3, 0, 1, 2, 3, 0, ...]
     chain_indexes = jnp.resize(jnp.arange(chains), chains * cv_folds)
     # fold_indexes  = [0, 0, 0, 0, 1, 1, 1, 1, 2, ...]
@@ -226,6 +246,7 @@ def cross_validate(
     kernel = cv_kernel(
         model.cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
     )
+
     # each step operates vector of states (representing a cross-section across chains)
     # and vector of rng keys, one per draw
     def one_step(states, rng_subkey):
@@ -236,5 +257,14 @@ def cross_validate(
 
     draw_keys = random.split(rng_key, draws)
     _, states = lax.scan(one_step, cv_initial_states, draw_keys)
+
+    # map positions back to model coordinates
+    position_model = vmap(model.to_model_params)(states.position)
+    states = CVHMCState(
+        position_model,
+        states.potential_energy,
+        states.potential_energy_grad,
+        states.cv_fold,
+    )
 
     return states

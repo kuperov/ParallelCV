@@ -1,11 +1,9 @@
-from typing import List
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from tabulate import tabulate
 
 from .model import CVModel
 
-from jax.scipy import stats as st
 from scipy import stats as sst
 import numpy as np
 
@@ -20,12 +18,15 @@ class CVPosterior(object):
         seed: seed used when invoking inference
     """
 
-    def __init__(self, model: CVModel, post_draws, cv_draws, seed, chains) -> None:
+    def __init__(
+        self, model: CVModel, post_draws, cv_draws, seed, chains, warmup
+    ) -> None:
         self.model = model
         self.post_draws = post_draws
         self.cv_draws = cv_draws
         self.seed = seed
         self.chains = chains
+        self.warmup = warmup
 
     def __repr__(self) -> str:
         title = f"{self.model.name} inference summary"
@@ -68,9 +69,9 @@ class CVPosterior(object):
 
     def cv_trace_plots(self, par, ncols=4, figsize=(40, 80)) -> None:
         """Plot trace plots for every single cross validation fold."""
-        rows = int(jnp.ceil(self.model.cv_folds / ncols))
+        rows = int(jnp.ceil(self.model.cv_folds() / ncols))
         fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
-        for fold, ax in zip(range(self.model.cv_folds), axes.ravel()):
+        for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
             ax.plot(self.cv_draws.position[par][:, chain_indexes])
 
@@ -92,9 +93,9 @@ class CVPosterior(object):
 
     def cv_post_densities(self, par, combine=False, ncols=4, figsize=(40, 80)):
         """Small-multiple kernel densities for cross-validation posteriors."""
-        rows = int(jnp.ceil(self.model.cv_folds / ncols))
+        rows = int(jnp.ceil(self.model.cv_folds() / ncols))
         fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
-        for fold, ax in zip(range(self.model.cv_folds), axes.ravel()):
+        for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
             all_draws = self.cv_draws.position[par][:, chain_indexes]
             if combine:
@@ -105,5 +106,5 @@ class CVPosterior(object):
                     kde = sst.gaussian_kde(draws)
                     xs = np.linspace(min(draws), max(draws), 1_000)
                     ax.plot(xs, kde(xs))
-                except:
+                except Exception:
                     print(f"Error evaluating kde for fold {fold}, chain {i}")
