@@ -1,4 +1,4 @@
-from typing import Dict, Tuple, Union
+from typing import Callable, Dict, Tuple, Union
 
 from jax import random, vmap, numpy as jnp
 from scipy import stats as sst
@@ -11,6 +11,7 @@ from .hmc import (
     CrossValidationState,
     InfParams,
     CVHMCState,
+    WarmupResults,
     warmup,
     full_data_inference,
     cross_validate,
@@ -35,7 +36,15 @@ class Posterior(object):
     """
 
     def __init__(
-        self, model: "Model", post_draws, seed, chains, draws, warmup, rng_key, print
+        self,
+        model: "Model",
+        post_draws: jnp.DeviceArray,
+        seed: int,
+        chains: int,
+        draws: int,
+        warmup: WarmupResults,
+        rng_key: jnp.DeviceArray,
+        print: Callable,
     ) -> None:
         self.model = model
         self.post_draws = post_draws
@@ -85,16 +94,23 @@ class Posterior(object):
         ]
         return tabulate(table_rows, headers=table_headers)
 
-    def cross_validate(self, draws=2_000, chains=4, rng_key=None):
-        """Run cross-validation for this posterior."""
+    def cross_validate(self, draws=None, chains=None, rng_key=None):
+        """Run cross-validation for this posterior.
+
+        Keyword arguments:
+            draws:   number of draws per chain
+            chains:  number of chains per CV posterior
+            rng_key: random generator state
+        """
+        chains = chains or self.chains
+        rng_key = rng_key or self.rng_key
+        draws = draws or self.draws
         timer = Timer()
         cv_chains = self.chains * self.model.cv_folds()
         self.print(
             f"Cross-validation with {self.model.cv_folds():,} folds "
             f"using {cv_chains:,} chains..."
         )
-
-        rng_key = rng_key or self.rng_key
 
         def cond_pred(cv_fold: CVFold, inf_params: InfParams) -> jnp.DeviceArray:
             model_params = self.model.to_model_params(inf_params)
@@ -135,7 +151,7 @@ class Posterior(object):
 
     def trace_plot(self, par, figsize=(16, 8)) -> None:
         """Plot trace plots for posterior draws"""
-        plt.plot(self.post_draws.position["sigma"][:, :])
+        plt.plot(self.post_draws.position[par][:, :])
 
     def density(self, par, combine=False):
         """Kernel densities for full-data posteriors"""
@@ -296,7 +312,7 @@ class Model(object):
             params: dict of model parameters in constrained (model)
                     parameter space
         """
-        raise NotImplementedError()
+        return 0.0
 
     def log_cond_pred(self, model_params: ModelParams, cv_fold: CVFold):
         """Computes log conditional predictive ordinate, log p(ỹ|θˢ).
@@ -369,7 +385,7 @@ class Model(object):
             dictionary of parameters with same structure as params, but
             in unconstrained (sampler) parameter space.
         """
-        raise NotImplementedError()
+        return model_params
 
     def to_model_params(self, inf_params: InfParams) -> ModelParams:
         """Convert unconstrained (inference) params to constrained (model) parameter space
@@ -382,7 +398,7 @@ class Model(object):
             dictionary of parameters with same structure as inf_params, but
             in constrained (model) parameter space.
         """
-        raise NotImplementedError()
+        return inf_params
 
     def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
         """Return total log determinant of transformation to constrained parameters
@@ -393,7 +409,7 @@ class Model(object):
         Returns:
             dictionary of parameters with same structure as model_params
         """
-        raise NotImplementedError()
+        return 0.0
 
     def inference(
         self,
