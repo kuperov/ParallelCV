@@ -21,13 +21,13 @@ class Posterior(object):
     """ploo posterior: captures full-data and loo results
 
     Members:
-        model: CVModel instance this was created from
+        model: Model instance this was created from
         post_draws: posterior draw array
         cv_draws: cross-validation draws
         seed: seed used when invoking inference
     """
 
-    def __init__(self, model: "CVModel", post_draws, seed, chains, warmup) -> None:
+    def __init__(self, model: "Model", post_draws, seed, chains, warmup) -> None:
         self.model = model
         self.post_draws = post_draws
         self.seed = seed
@@ -104,7 +104,7 @@ class Posterior(object):
             states.cv_fold,
         )
 
-        return CVPosterior(self, states)
+        return CrossValidation(self, states)
 
     def trace_plot(self, par, figsize=(16, 8)) -> None:
         """Plot trace plots for posterior draws"""
@@ -123,7 +123,7 @@ class Posterior(object):
         plt.title(f"{par} posterior density")
 
 
-class CVPosterior(object):
+class CrossValidation(object):
     """Cross-validated model
 
     This class contains draws for all the CV posteriors.
@@ -160,7 +160,7 @@ class CVPosterior(object):
             ax.plot(self.cv_draws.position[par][:, chain_indexes])
 
 
-class CVModel(object):
+class Model(object):
     """Bayesian model. Encapsulates both data and specification.
 
     There are two sets of parameters referenced in this class, both of

@@ -5,7 +5,7 @@ from functools import partial
 import ploo
 
 
-class AR1(ploo.CVModel):
+class AR1(ploo.Model):
     r"""Simple AR(1) model with LOO
 
     $$ y_t = \mu + \rho y_{t-1} + \sigma \varepsilon_t, \qquad t=1,\dots,(N-1) $$

@@ -6,7 +6,7 @@ import jax.scipy.stats as st
 import ploo
 
 
-class GaussianModel(ploo.CVModel):
+class GaussianModel(ploo.Model):
     r"""Simple Gaussian experiment for testing inference
 
     The model is given by

@@ -4,10 +4,10 @@ import unittest
 from jax import numpy as jnp
 from jax.scipy import stats as st
 
-from ploo import CVModel, LogTransform
+from ploo import Model, LogTransform
 
 
-class _GaussianVarianceModel(CVModel):
+class _GaussianVarianceModel(Model):
     r"""Test model: Gaussian with unknown variance and a single obs
 
     The prior for :math:`\sigma^2` is Gamma(a, b).
