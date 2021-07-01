@@ -70,7 +70,7 @@ class TestGaussian(unittest.TestCase):
             chains=4,
             seed=42,
             out=DummyProgress(),
-            warmup_results=warmup,
+            # warmup_results=warmup,
         )
         self.assertIsInstance(post, CVPosterior)
         self.assertEqual(post.seed, 42)

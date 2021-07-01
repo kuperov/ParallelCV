@@ -37,7 +37,7 @@ class LogTransform(Transform):
         return jnp.exp(param)
 
     def log_det(self, param):
-        return param
+        return jnp.log(param)
 
 
 class IntervalTransform(Transform):
