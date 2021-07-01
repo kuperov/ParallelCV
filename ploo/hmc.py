@@ -2,16 +2,22 @@
 for use as a driver for cross-validation.
 """
 
-
 from typing import Callable, Dict, List, NamedTuple, Tuple, Union
 
 import jax
-from jax import numpy as jnp, scipy as jscipy
-import numpy as np
+from jax import numpy as jnp, scipy as jscipy, random, lax, vmap
 from jax.flatten_util import ravel_pytree
+import numpy as np
+
+from blackjax import nuts, stan_warmup
+
 
 Array = Union[np.ndarray, jnp.DeviceArray]
 PyTree = Union[Dict, List, Tuple]
+
+
+# inference parameter type annotation
+InfParams = Dict[str, jnp.DeviceArray]
 
 
 class IntegratorState(NamedTuple):
@@ -42,6 +48,197 @@ class Proposal(NamedTuple):
     energy: float
     weight: float  # log sum canonical densities of eah state e^{-H(z)} along trajectory
     sum_log_p_accept: float  # sum of MH acceptance probs along trajectory
+
+
+class WarmupResults(NamedTuple):
+    """Results of the warmup procedure
+
+    These parameters are used to configure future HMC runs.
+    """
+
+    step_size: float
+    mass_matrix: jnp.DeviceArray
+    starting_values: List[Dict]
+    int_steps: int
+
+    @property
+    def code(self) -> str:
+        """Python code for recreating this warmup output.
+
+        Use this to create reproducible tests that don't take too ong to run.
+        """
+
+        def da2c(a):
+            return (
+                str(a)
+                .replace("DeviceArray", "jnp.array")
+                .replace(", dtype=float32", "")
+            )
+
+        sv_code = da2c(self.starting_values)
+        mm_code = da2c(jnp.array(self.mass_matrix))
+        py = (
+            "WarmupResults(\n"
+            f"    step_size={self.step_size},\n"
+            f"    mass_matrix=jnp.array({mm_code}),\n"
+            f"    starting_values={sv_code},\n"
+            f"    int_steps={self.int_steps})"
+        )
+        return py
+
+
+def warmup(
+    cv_potential: Callable,
+    initial_value: InfParams,
+    warmup_steps,
+    num_start_pos,
+    rng_key,
+) -> WarmupResults:
+    """Run Stan warmup
+
+    We sample initial positions from second half of the Stan warmup, running
+    NUTS. Yes I know this is awful, awful, awful. Please don't judge, we'll
+    replace it with a shiny new warmup scheme that will surely never have any
+    problems ever.
+
+    Keyword args:
+        cv_potential:  potential function, takes model parameter and cross-validation fold
+        initial_value: an initial value, expressed in inference (unconstrained) parameters
+        warmup_steps:  number of warmup iterations
+        num_start_pos: number of starting positions to extract
+        rng_key:       random generator state
+
+    Returns:
+        WarmupResults object containing step size, mass matrix, initial positions,
+        and integration steps.
+    """
+    assert jnp.isfinite(cv_potential(initial_value, -1)), "Invalid initial value"
+    warmup_key, start_val_key = random.split(rng_key)
+
+    def potential(param):
+        return cv_potential(param, cv_fold=-1)  # full-data potential
+
+    def kernel_factory(step_size, inverse_mass_matrix):
+        return nuts.kernel(potential, step_size, inverse_mass_matrix)
+
+    initial_state = nuts.new_state(initial_value, potential)
+    state, (step_size, mass_matrix), adapt_chain = stan_warmup.run(
+        warmup_key,
+        kernel_factory,
+        initial_state,
+        num_steps=warmup_steps,
+        is_mass_matrix_diagonal=True,
+        initial_step_size=1e-3,
+    )
+    hmc_warmup_state, stan_warmup_state, nuts_info = adapt_chain
+    assert jnp.isfinite(step_size), "Woops, step size is not finite."
+
+    # Sample the initial values uniformly from the second half of the
+    # warmup chain
+    varname = next(iter(hmc_warmup_state.position))
+    warmup_steps = hmc_warmup_state.position[varname].shape[0]
+    start_idxs = random.choice(
+        start_val_key,
+        a=jnp.arange(warmup_steps // 2, warmup_steps),
+        shape=(num_start_pos,),
+        replace=True,
+    )
+    initial_values = {
+        k: hmc_warmup_state.position[k][start_idxs] for k in initial_value
+    }
+
+    # take median of NUTS integration steps for static path length
+    int_steps = int(jnp.median(nuts_info.integration_steps[(warmup_steps // 2) :]))
+
+    return WarmupResults(step_size, mass_matrix, initial_values, int_steps)
+
+
+def full_data_inference(
+    potential: Callable,
+    warmup: WarmupResults,
+    draws: int,
+    chains: int,
+    rng_key: jnp.DeviceArray,
+) -> CVHMCState:
+    """Full-data inference on model with no CV folds dropped.
+
+    Keyword args:
+        model:   model to perform inference on
+        warmup:  results from warmup procedure
+        draws:   number of posterior draws per chain
+        chains:  number of chains
+        rng_key: random generator state
+    """
+    # NB: the special CV fold index of -1 indicates full-data inference
+    # one initial state per chain
+    initial_states = vmap(new_cv_state, in_axes=(0, None, None))(
+        warmup.starting_values, potential, -1
+    )
+    kernel = cv_kernel(
+        potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
+    )
+
+    def one_step(states, iter_key):
+        keys = random.split(iter_key, chains)
+        states, _ = vmap(kernel)(keys, states)
+        return states, states
+
+    draw_keys = random.split(rng_key, draws)
+    _, states = lax.scan(one_step, initial_states, draw_keys)
+
+    return states
+
+
+def cross_validate(
+    cv_potential: Callable,
+    warmup: WarmupResults,
+    cv_folds: int,
+    draws: int,
+    chains: int,
+    rng_key: jnp.DeviceArray,
+) -> CVHMCState:
+    """Cross validation step.
+
+    Runs inference acros all CV folds, using cross-validated version of model potential.
+
+    For now, we will collect all the MCMC samples. In the future we'll replace
+    the inference loop with something that calculates the objective functions
+    (and diagnostics) we want using online estimators.
+
+    Keyword args:
+        model: model instance
+        warmup: results from warmup procedure
+        draws: number of draws per chain
+        chains: number of chains per fold
+        key: random generator state
+    """
+    # chain_indexes = [0, 1, 2, 3, 0, 1, 2, 3, 0, ...]
+    chain_indexes = jnp.resize(jnp.arange(chains), chains * cv_folds)
+    # fold_indexes  = [0, 0, 0, 0, 1, 1, 1, 1, 2, ...]
+    fold_indexes = jnp.repeat(jnp.arange(cv_folds), chains)
+    assert chain_indexes.shape == fold_indexes.shape
+    chain_starting_values = {
+        k: sv[chain_indexes] for (k, sv) in warmup.starting_values.items()
+    }
+    cv_initial_states = vmap(new_cv_state, (0, None, 0))(
+        chain_starting_values, cv_potential, fold_indexes
+    )
+    kernel = cv_kernel(
+        cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
+    )
+
+    # each step operates vector of states (representing a cross-section across chains)
+    # and vector of rng keys, one per draw
+    def one_step(states, rng_subkey):
+        keys = random.split(rng_subkey, chains * cv_folds)
+        states, _ = vmap(kernel)(keys, states)
+        # TODO: untransform position and evaluate lpd
+        return states, states
+
+    draw_keys = random.split(rng_key, draws)
+    _, states = lax.scan(one_step, cv_initial_states, draw_keys)
+
+    return states
 
 
 def new_cv_state(position: PyTree, potential_fn: Callable, cv_fold: int) -> CVHMCState:

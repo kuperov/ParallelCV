@@ -6,7 +6,7 @@ from scipy import stats as st
 import numpy as np
 import pandas
 
-from ploo import run_hmc, CVPosterior, DummyProgress, GaussianModel
+from ploo import Posterior, DummyProgress, GaussianModel
 
 
 def fixture(fname):
@@ -53,15 +53,14 @@ class TestGaussian(unittest.TestCase):
     def test_hmc(self):
         y = GaussianModel.generate(N=200, mu=0.5, sigma=2.0, seed=42)
         gauss = GaussianModel(y)
-        post = run_hmc(
-            gauss,
+        post = gauss.inference(
             draws=1000,
             warmup_steps=800,
             chains=4,
             seed=42,
             out=DummyProgress(),
         )
-        self.assertIsInstance(post, CVPosterior)
+        self.assertIsInstance(post, Posterior)
         self.assertEqual(post.seed, 42)
         self.assertIs(gauss, post.model)
         p0 = next(iter(gauss.parameters()))

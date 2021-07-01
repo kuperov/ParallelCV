@@ -42,10 +42,10 @@ class _GaussianVarianceModel(CVModel):
     def initial_value(self) -> ModelParams:
         return {"sigma_sq": 1.0}
 
-    def log_pred(self, cv_index, model_params: ModelParams):
+    def log_pred(self, cv_fold, model_params: ModelParams):
         sigma_sq = model_params["sigma_sq"]
         # this makes no sense statistically but works for testing
-        return st.norm.logpdf(float(cv_index), loc=self.mean, scale=jnp.sqrt(sigma_sq))
+        return st.norm.logpdf(float(cv_fold), loc=self.mean, scale=jnp.sqrt(sigma_sq))
 
     def to_inference_params(self, model_params: ModelParams) -> InfParams:
         unconstrained = {"sigma_sq": self.sigma_sq_transform(model_params["sigma_sq"])}
