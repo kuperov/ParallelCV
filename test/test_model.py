@@ -1,4 +1,5 @@
-from ploo.model import InfParams, ModelParams
+from ploo.util import DummyProgress
+from ploo.model import CVFold, InfParams, ModelParams
 import unittest
 
 from jax import numpy as jnp
@@ -42,10 +43,10 @@ class _GaussianVarianceModel(Model):
     def initial_value(self) -> ModelParams:
         return {"sigma_sq": 1.0}
 
-    def log_pred(self, cv_fold, model_params: ModelParams):
+    def log_cond_pred(self, model_params: ModelParams, cv_fold: CVFold):
         sigma_sq = model_params["sigma_sq"]
         # this makes no sense statistically but works for testing
-        return st.norm.logpdf(float(cv_fold), loc=self.mean, scale=jnp.sqrt(sigma_sq))
+        return st.norm.logpdf(cv_fold, loc=self.mean, scale=jnp.sqrt(sigma_sq))
 
     def to_inference_params(self, model_params: ModelParams) -> InfParams:
         unconstrained = {"sigma_sq": self.sigma_sq_transform(model_params["sigma_sq"])}
@@ -59,6 +60,9 @@ class _GaussianVarianceModel(Model):
 
     def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
         return self.sigma_sq_transform.log_det(model_params["sigma_sq"])
+
+    def cv_folds(self):
+        return 5  # will yield nonsense CV values of course
 
 
 class TestModelParam(unittest.TestCase):
@@ -84,9 +88,15 @@ class TestModelParam(unittest.TestCase):
     def test_log_pred(self):
         for sig_sq in [0.5, 1.5]:
             self.assertEqual(
-                self.model.log_pred(2, {"sigma_sq": sig_sq}),
+                self.model.log_cond_pred({"sigma_sq": sig_sq}, 2),
                 st.norm.logpdf(2.0, loc=0.0, scale=jnp.sqrt(sig_sq)),
             )
+
+    def test_inference(self):
+        post = self.model.inference(draws=1000, chains=4, out=DummyProgress())
+        cv = post.cross_validate()
+        mu_means = jnp.mean(cv.states.position["sigma_sq"])
+        self.assertIsNotNone(mu_means)
 
 
 if __name__ == "__main__":

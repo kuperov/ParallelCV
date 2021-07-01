@@ -7,7 +7,14 @@ import matplotlib.pyplot as plt
 from tabulate import tabulate
 
 from .util import Progress, Timer
-from .hmc import InfParams, CVHMCState, warmup, full_data_inference, cross_validate
+from .hmc import (
+    CrossValidationState,
+    InfParams,
+    CVHMCState,
+    warmup,
+    full_data_inference,
+    cross_validate,
+)
 
 
 # model parameters are in a constrained coordinate space
@@ -27,12 +34,17 @@ class Posterior(object):
         seed: seed used when invoking inference
     """
 
-    def __init__(self, model: "Model", post_draws, seed, chains, warmup) -> None:
+    def __init__(
+        self, model: "Model", post_draws, seed, chains, draws, warmup, rng_key, print
+    ) -> None:
         self.model = model
         self.post_draws = post_draws
         self.seed = seed
         self.chains = chains
+        self.draws = draws
         self.warmup = warmup
+        self.rng_key = rng_key
+        self.print = print
 
     def __repr__(self) -> str:
         title = f"{self.model.name} inference summary"
@@ -77,26 +89,28 @@ class Posterior(object):
         """Run cross-validation for this posterior."""
         timer = Timer()
         cv_chains = self.chains * self.model.cv_folds()
-        print(
-            f"Step 3/3. Cross-validation with {self.model.cv_folds():,} folds "
+        self.print(
+            f"Cross-validation with {self.model.cv_folds():,} folds "
             f"using {cv_chains:,} chains..."
         )
+
+        rng_key = rng_key or self.rng_key
 
         def cond_pred(cv_fold: CVFold, inf_params: InfParams) -> jnp.DeviceArray:
             model_params = self.model.to_model_params(inf_params)
             self.model.log_cond_pred(cv_fold, model_params)
 
-        states = cross_validate(
+        accumulator, states = cross_validate(
             self.model.cv_potential,
-            self.cond_pred,
+            self.model.log_cond_pred,
             self.warmup,
-            self.model.cv_folds,
+            self.model.cv_folds(),
             draws,
             chains,
             rng_key,
         )
-        print(
-            f"          {cv_chains*draws:,} HMC draws took {timer}"
+        self.print(
+            f"      {cv_chains*draws:,} HMC draws took {timer}"
             f" ({cv_chains*draws/timer.sec:,.0f} iter/sec)."
         )
 
@@ -110,7 +124,14 @@ class Posterior(object):
             states.cv_fold,
         )
 
-        return CrossValidation(self, states)
+        return CrossValidation(
+            self,
+            accumulator,
+            states,
+            draws=draws,
+            chains=chains,
+            folds=self.model.cv_folds(),
+        )
 
     def trace_plot(self, par, figsize=(16, 8)) -> None:
         """Plot trace plots for posterior draws"""
@@ -135,9 +156,66 @@ class CrossValidation(object):
     This class contains draws for all the CV posteriors.
     """
 
-    def __init__(self, post: Posterior, cv_states: CVHMCState) -> None:
+    def __init__(
+        self,
+        post: Posterior,
+        cv_accumulator: CrossValidationState,
+        cv_states: CVHMCState,
+        draws: int,
+        chains: int,
+        folds: int,
+    ) -> None:
         self.post = post
-        self.cv_states = CVHMCState
+        self.accumulator = cv_accumulator
+        self.states = cv_states
+        self.draws = draws
+        self.chains = chains
+        self.folds = folds
+
+    @property
+    def model(self) -> "Model":
+        return self.post.model
+
+    @property
+    def elpd(self) -> float:
+        return float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
+
+    @property
+    def divergences(self):
+        return self.accumulator.divergence_count
+
+    @property
+    def num_divergent_chains(self):
+        return int(jnp.sum(self.accumulator.divergence_count > 0))
+
+    @property
+    def acceptance_rates(self):
+        return self.accumulator.accepted_count / self.draws
+
+    def __repr__(self) -> str:
+        avg_accept = float(jnp.mean(self.acceptance_rates))
+        min_accept = float(jnp.min(self.acceptance_rates))
+        max_accept = float(jnp.max(self.acceptance_rates))
+        return "\n".join(
+            [
+                "Cross-validation summary",
+                "========================",
+                "",
+                f"    elpd = {self.elpd:.4f}",
+                "",
+                f"Calculated from {self.folds:,} folds ({self.chains:,} per fold, "
+                f"{self.chains*self.folds} total chains)",
+                "",
+                f"Average acceptance rate {avg_accept*100:.1f}% (min {min_accept*100:.1f}%, "
+                f"max {max_accept*100:.1f}%)",
+                "",
+                f"Divergent chain count: {self.num_divergent_chains}",
+            ]
+        )
+
+    def block_until_ready(self) -> None:
+        """Block the thread until results are back from the GPU."""
+        self.cv_accumulator.divergence_count.block_until_ready()
 
     def densities(self, par, combine=False, ncols=4, figsize=(40, 80)):
         """Small-multiple kernel densities for cross-validation posteriors."""
@@ -145,7 +223,7 @@ class CrossValidation(object):
         fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
         for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
-            all_draws = self.cv_draws.position[par][:, chain_indexes]
+            all_draws = self.states.position[par][:, chain_indexes]
             if combine:
                 all_draws = jnp.expand_dims(jnp.reshape(all_draws, (-1,)), axis=1)
             for i in range(self.chains):
@@ -163,7 +241,7 @@ class CrossValidation(object):
         fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
         for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
-            ax.plot(self.cv_draws.position[par][:, chain_indexes])
+            ax.plot(self.states.position[par][:, chain_indexes])
 
 
 class Model(object):
@@ -338,7 +416,7 @@ class Model(object):
         """
         print = (out or Progress()).print
         rng_key = random.PRNGKey(seed)
-        warmup_key, inference_key, cv_key = random.split(rng_key, 3)
+        warmup_key, inference_key, post_key = random.split(rng_key, 3)
 
         print("The Cross-Validatory Sledgehammer")
         print("=================================\n")
@@ -380,5 +458,12 @@ class Model(object):
         )
 
         return Posterior(
-            self, post_draws=states, seed=seed, chains=chains, warmup=warmup_results
+            self,
+            post_draws=states,
+            seed=seed,
+            chains=chains,
+            draws=draws,
+            warmup=warmup_results,
+            rng_key=post_key,
+            print=print,
         )
