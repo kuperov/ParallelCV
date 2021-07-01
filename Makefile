@@ -1,6 +1,29 @@
-.PHONY: all
-all:
-	@echo "No 'all' target"
+# ploo package 
+
+define HELP
+ploo package Makefile
+
+The following targets are available:
+
+  help   display this message
+  nb     start a jupyter notebook
+  test   run unit tests
+  venv   create the virtual environment in venv/
+  black  format code using the black package
+  lint   run code linter
+  config first-time environment setup
+  clean  remove generated files
+
+You can invoke any of the above with:
+
+  make <target>
+
+endef
+export HELP
+
+.PHONY: help
+help:
+	@echo "$$HELP"
 
 .PHONY: nb
 nb: venv
@@ -17,6 +40,7 @@ venv:
 	# you'll need virtualenv and pip installed, obvs
 	rm -rf venv
 	python3 -m virtualenv --python=python3 venv
+	venv/bin/pip3 install --upgrade pip
 	venv/bin/pip3 install -r requirements.txt
 	venv/bin/pip3 install -r requirements-dev.txt
 	venv/bin/python3 setup.py develop

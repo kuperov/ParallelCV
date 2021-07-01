@@ -4,7 +4,7 @@ from jax import numpy as jnp
 from scipy.integrate import quad
 from scipy import stats as st
 
-from ploo.transforms import *
+from ploo.transforms import LogTransform
 
 
 class TestTransforms(unittest.TestCase):

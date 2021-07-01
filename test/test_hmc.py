@@ -4,19 +4,17 @@ import unittest
 from jax import numpy as jnp, random
 
 from ploo import (
-    warmup,
-    full_data_inference,
-    cross_validate,
     GaussianModel,
     WarmupResults,
 )
+from ploo.hmc import warmup, full_data_inference, cross_validate
 
 
 class TestInference(unittest.TestCase):
     def setUp(self):
         self.y = GaussianModel.generate(N=200, mu=0.5, sigma=2, seed=42)
         self.gauss = GaussianModel(self.y)
-        self.key = random.PRNGKey(42)
+        self.rng_key = random.PRNGKey(42)
         # by passing in warmup results we can skip the warmup step
         self.wu = WarmupResults(
             step_size=1.215579867362976,
@@ -29,7 +27,8 @@ class TestInference(unittest.TestCase):
         )
 
     def test_warmup(self):
-        wu = warmup(self.gauss, 600, 8, self.key)
+        initial = self.gauss.to_inference_params(self.gauss.initial_value())
+        wu = warmup(self.gauss.cv_potential, initial, 600, 8, self.rng_key)
         self.assertIsInstance(wu, WarmupResults)
         self.assertEqual(wu.int_steps, 3)
         self.assertIsInstance(wu.starting_values, dict)
@@ -41,13 +40,19 @@ class TestInference(unittest.TestCase):
 
     def test_full_data_inference(self):
         states = full_data_inference(
-            self.gauss, self.wu, draws=1000, chains=4, rng_key=self.key
+            self.gauss.cv_potential, self.wu, draws=1000, chains=4, rng_key=self.rng_key
         )
         self.assertEqual(states.position["mu"].shape, (1000, 4))
 
     def test_cross_validation(self):
-        states = cross_validate(
-            self.gauss, self.wu, draws=1e3, chains=2, rng_key=self.key
+        accumulator, states = cross_validate(
+            cv_potential=self.gauss.cv_potential,
+            cv_cond_pred=self.gauss.log_cond_pred,
+            warmup=self.wu,
+            cv_folds=self.gauss.cv_folds(),
+            draws=1e3,
+            chains=2,
+            rng_key=self.rng_key,
         )
         self.assertIsNotNone(states)
 

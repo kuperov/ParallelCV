@@ -1,4 +1,4 @@
-from ploo.model import InfParams, ModelParams
+from ploo.model import CVFold, InfParams, ModelParams
 from ploo.transforms import LogTransform
 from jax import random, numpy as jnp
 import jax.scipy.stats as st
@@ -6,7 +6,7 @@ import jax.scipy.stats as st
 import ploo
 
 
-class GaussianModel(ploo.CVModel):
+class GaussianModel(ploo.Model):
     r"""Simple Gaussian experiment for testing inference
 
     The model is given by
@@ -49,6 +49,12 @@ class GaussianModel(ploo.CVModel):
             model_params["sigma"], a=self.sigma_shape, scale=1.0 / self.sigma_rate
         )
         return mu_prior + sigma_prior
+
+    def log_cond_pred(self, model_params: ModelParams, cv_fold: CVFold):
+        y_tilde = self.y[cv_fold]  # in this example cv_fold just indexes the data
+        return st.norm.logpdf(
+            y_tilde, loc=model_params["mu"], scale=model_params["sigma"]
+        )
 
     def initial_value(self) -> ModelParams:
         return {"mu": 0.0, "sigma": 1.0}
