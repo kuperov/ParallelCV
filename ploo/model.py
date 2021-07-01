@@ -418,8 +418,8 @@ class Model(object):
         rng_key = random.PRNGKey(seed)
         warmup_key, inference_key, post_key = random.split(rng_key, 3)
 
-        print("The Cross-Validatory Sledgehammer")
-        print("=================================\n")
+        print("Thor's Cross-Validatory Hammer")
+        print("==============================\n")
 
         if warmup_results:
             print("Skipping warmup")
