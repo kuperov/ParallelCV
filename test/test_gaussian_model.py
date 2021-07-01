@@ -86,8 +86,9 @@ class TestGaussian(unittest.TestCase):
         )
 
         # Because Dan and Lauren like hypothesis tests so much
-        mu_draws = post.post_draws.position["mu"].reshape((-1,))
-        sigma_draws = post.post_draws.position["mu"].reshape(
+        draws = post.post_draws.position
+        mu_draws = draws["mu"].reshape((-1,))
+        sigma_draws = draws["sigma"].reshape(
             -1,
         )
         stan_post = pandas.read_csv(fixture("gaussian_post.csv"))
