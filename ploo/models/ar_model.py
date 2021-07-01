@@ -13,7 +13,8 @@ class AR1(ploo.CVModel):
     $$ \varepsilon \sim \mathcal{N}\left( 0, 1\right) $$
 
     We assume we also have priors
-    $$ \mu \sim N(0,1/16), \qquad \sigma \sim Gamma(2,2), \qquad\mathrm{and}\qquad \rho \sim Beta(2,2).$$
+    $$ \mu \sim N(0,1/16), \qquad \sigma \sim Gamma(2,2), \qquad\mathrm{and}\qquad
+    \rho \sim Beta(2,2).$$
     """
 
     def __init__(self, y) -> None:
