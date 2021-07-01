@@ -81,8 +81,14 @@ class Posterior(object):
             f"Step 3/3. Cross-validation with {self.model.cv_folds():,} folds "
             f"using {cv_chains:,} chains..."
         )
+
+        def cond_pred(cv_fold: CVFold, inf_params: InfParams) -> jnp.DeviceArray:
+            model_params = self.model.to_model_params(inf_params)
+            self.model.log_cond_pred(cv_fold, model_params)
+
         states = cross_validate(
             self.model.cv_potential,
+            self.cond_pred,
             self.warmup,
             self.model.cv_folds,
             draws,
@@ -161,7 +167,7 @@ class CrossValidation(object):
 
 
 class Model(object):
-    """Bayesian model. Encapsulates both data and specification.
+    """A Bayesian model. Encapsulates both data and specification.
 
     There are two sets of parameters referenced in this class, both of
     which are expressed as dicts keyed by variable name:
