@@ -45,10 +45,11 @@ class TestInference(unittest.TestCase):
         self.assertEqual(states.position["mu"].shape, (1000, 4))
 
     def test_cross_validation(self):
-        states = cross_validate(
-            self.gauss.cv_potential,
-            self.wu,
-            self.gauss.cv_folds(),
+        accumulator, states = cross_validate(
+            cv_potential=self.gauss.cv_potential,
+            cv_cond_pred=self.gauss.log_cond_pred,
+            warmup=self.wu,
+            cv_folds=self.gauss.cv_folds(),
             draws=1e3,
             chains=2,
             rng_key=self.rng_key,

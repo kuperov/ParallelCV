@@ -50,6 +50,13 @@ class Proposal(NamedTuple):
     sum_log_p_accept: float  # sum of MH acceptance probs along trajectory
 
 
+class CrossValidationState(NamedTuple):
+    divergence_count: int
+    accepted_count: int
+    sum_log_pred_dens: Array
+    hmc_state: CVHMCState
+
+
 class WarmupResults(NamedTuple):
     """Results of the warmup procedure
 
@@ -191,6 +198,7 @@ def full_data_inference(
 
 def cross_validate(
     cv_potential: Callable,
+    cv_cond_pred: Callable,
     warmup: WarmupResults,
     cv_folds: int,
     draws: int,
@@ -206,12 +214,20 @@ def cross_validate(
     (and diagnostics) we want using online estimators.
 
     Keyword args:
-        model: model instance
-        warmup: results from warmup procedure
-        draws: number of draws per chain
-        chains: number of chains per fold
-        key: random generator state
+        cv_potential: cross-validation model potential, function of
+                      (inference parameters, cv_fold)
+        cv_cond_pred: cross-validation conditional predictive density, function of
+                      (inference_parameters, cv_fold)
+        warmup:       results from warmup procedure
+        cv_folds:     number of cross-validation folds
+        draws:        number of draws per chain
+        chains:       number of chains per fold
+        key:          random generator state
+
+    Returns:
+        CVHMCState object containing conditional predictive
     """
+    # assuming 4 chains and a 1-dimensional cross-validation structure,
     # chain_indexes = [0, 1, 2, 3, 0, 1, 2, 3, 0, ...]
     chain_indexes = jnp.resize(jnp.arange(chains), chains * cv_folds)
     # fold_indexes  = [0, 0, 0, 0, 1, 1, 1, 1, 2, ...]
@@ -223,22 +239,38 @@ def cross_validate(
     cv_initial_states = vmap(new_cv_state, (0, None, 0))(
         chain_starting_values, cv_potential, fold_indexes
     )
+    cv_initial_accumulator = CrossValidationState(
+        divergence_count=jnp.zeros_like(fold_indexes),
+        accepted_count=jnp.zeros_like(fold_indexes),
+        sum_log_pred_dens=jnp.zeros_like(fold_indexes),
+        hmc_state=cv_initial_states,
+    )
     kernel = cv_kernel(
         cv_potential, warmup.step_size, warmup.mass_matrix, warmup.int_steps
     )
 
     # each step operates vector of states (representing a cross-section across chains)
     # and vector of rng keys, one per draw
-    def one_step(states, rng_subkey):
+    def one_step(
+        cv_state: CrossValidationState, rng_subkey: jnp.DeviceArray
+    ) -> Tuple[CrossValidationState, CVHMCState]:
         keys = random.split(rng_subkey, chains * cv_folds)
-        states, _ = vmap(kernel)(keys, states)
-        # TODO: untransform position and evaluate lpd
-        return states, states
+        hmc_state, hmc_info = vmap(kernel)(keys, cv_state.hmc_state)
+        cond_pred = vmap(cv_cond_pred)(hmc_state.position, hmc_state.cv_fold)
+        new_cv_state = CrossValidationState(
+            divergence_count=cv_state.divergence_count
+            + jnp.where(hmc_info.is_divergent, 1, 0),
+            accepted_count=cv_state.accepted_count
+            + jnp.where(hmc_info.is_accepted, 1, 0),
+            sum_log_pred_dens=cv_state.sum_log_pred_dens + cond_pred,
+            hmc_state=hmc_state,
+        )
+        return new_cv_state, hmc_state  # (accumulated state, iteration state)
 
     draw_keys = random.split(rng_key, draws)
-    _, states = lax.scan(one_step, cv_initial_states, draw_keys)
+    accumulator, states = lax.scan(one_step, cv_initial_accumulator, draw_keys)
 
-    return states
+    return accumulator, states
 
 
 def new_cv_state(position: PyTree, potential_fn: Callable, cv_fold: int) -> CVHMCState:
