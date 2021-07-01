@@ -220,15 +220,15 @@ class Model(object):
         """
         raise NotImplementedError()
 
-    def log_cond_pred(self, cv_fold: CVFold, model_params: ModelParams):
+    def log_cond_pred(self, model_params: ModelParams, cv_fold: CVFold):
         """Computes log conditional predictive ordinate, log p(ỹ|θˢ).
 
         FIXME: needs some kind of index to identify the conditioning values
 
         Keyword arguments:
-            cv_fold: index of point at which to evaluate predictive density
             params:  a dict of parameters (constrained (model) parameter
                      space) that potentially contains vectors
+            cv_fold: index of point at which to evaluate predictive density
         """
         raise NotImplementedError()
 
@@ -245,7 +245,7 @@ class Model(object):
         """Deterministic starting value, transformed to unconstrained inference space"""
         return self.to_inference_params(self.initial_value())
 
-    def cv_potential(self, inf_params: InfParams, cv_fold: int) -> jnp.DeviceArray:
+    def cv_potential(self, inf_params: InfParams, cv_fold: CVFold) -> jnp.DeviceArray:
         """Potential for the given CV fold.
 
         We use index=-1 to indicate full-data likelihood (ie no CV folds dropped). If

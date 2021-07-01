@@ -50,7 +50,7 @@ class GaussianModel(ploo.Model):
         )
         return mu_prior + sigma_prior
 
-    def log_cond_pred(self, cv_fold: CVFold, model_params: ModelParams):
+    def log_cond_pred(self, model_params: ModelParams, cv_fold: CVFold):
         y_tilde = self.y[cv_fold]  # in this example cv_fold just indexes the data
         return st.norm.logpdf(
             y_tilde, loc=model_params["mu"], scale=model_params["sigma"]

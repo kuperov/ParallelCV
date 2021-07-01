@@ -240,9 +240,9 @@ def cross_validate(
         chain_starting_values, cv_potential, fold_indexes
     )
     cv_initial_accumulator = CrossValidationState(
-        divergence_count=jnp.zeros_like(fold_indexes),
-        accepted_count=jnp.zeros_like(fold_indexes),
-        sum_log_pred_dens=jnp.zeros_like(fold_indexes),
+        divergence_count=jnp.zeros(fold_indexes.shape),
+        accepted_count=jnp.zeros(fold_indexes.shape),
+        sum_log_pred_dens=jnp.zeros(fold_indexes.shape),
         hmc_state=cv_initial_states,
     )
     kernel = cv_kernel(

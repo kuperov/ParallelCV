@@ -40,6 +40,7 @@ venv:
 	# you'll need virtualenv and pip installed, obvs
 	rm -rf venv
 	python3 -m virtualenv --python=python3 venv
+	venv/bin/pip3 install --upgrade pip
 	venv/bin/pip3 install -r requirements.txt
 	venv/bin/pip3 install -r requirements-dev.txt
 	venv/bin/python3 setup.py develop
