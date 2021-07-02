@@ -47,10 +47,18 @@ class TestGaussian(unittest.TestCase):
     def test_transforms(self):
         mp = {"mu": 0.5, "sigma": 2.5}
         tp = {"mu": 0.5, "sigma": jnp.log(2.5)}
-        self.assertAlmostEqual(jnp.array(mp['mu']), self.m.to_model_params(tp)['mu'], places=5)
-        self.assertAlmostEqual(jnp.array(mp['sigma']), self.m.to_model_params(tp)['sigma'], places=5)
-        self.assertAlmostEqual(jnp.array(tp['mu']), self.m.to_inference_params(mp)['mu'], places=5)
-        self.assertAlmostEqual(jnp.array(tp['sigma']), self.m.to_inference_params(mp)['sigma'], places=5)
+        self.assertAlmostEqual(
+            jnp.array(mp["mu"]), self.m.to_model_params(tp)["mu"], places=5
+        )
+        self.assertAlmostEqual(
+            jnp.array(mp["sigma"]), self.m.to_model_params(tp)["sigma"], places=5
+        )
+        self.assertAlmostEqual(
+            jnp.array(tp["mu"]), self.m.to_inference_params(mp)["mu"], places=5
+        )
+        self.assertAlmostEqual(
+            jnp.array(tp["sigma"]), self.m.to_inference_params(mp)["sigma"], places=5
+        )
 
     def test_hmc(self):
         y = GaussianModel.generate(N=200, mu=0.5, sigma=2.0, seed=42)
