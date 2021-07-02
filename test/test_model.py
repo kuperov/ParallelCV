@@ -94,7 +94,6 @@ class TestModelParam(unittest.TestCase):
         )
 
     def test_log_pred(self):
-        # fixme: this is a stupid test
         for sig_sq in [0.5, 1.5]:
             self.assertEqual(
                 self.model.log_cond_pred({"sigma_sq": sig_sq}, 2),
