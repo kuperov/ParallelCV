@@ -77,7 +77,7 @@ class TestModelParam(unittest.TestCase):
         lprior = self.model.log_prior({"sigma_sq": 2.5})
         ldet = self.model.log_det({"sigma_sq": 2.5})
         pot = self.model.cv_potential(inf_params={"sigma_sq": jnp.log(2.5)}, cv_fold=-1)
-        self.assertEqual(llik + lprior, -pot - ldet)
+        self.assertAlmostEqual(llik + lprior, -pot - ldet, places=5)
 
     def test_initial_value(self):
         self.assertDictEqual(self.model.initial_value(), {"sigma_sq": 1.0})

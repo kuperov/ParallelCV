@@ -25,11 +25,11 @@ class TestTransforms(unittest.TestCase):
             return jnp.exp(lpdf(sig_sq) + ldet)
 
         vol, err = quad(pdf, -jnp.inf, jnp.inf)
-        self.assertAlmostEqual(1.0, vol, delta=2 * err)
+        self.assertAlmostEqual(1.0, vol, places=6)
         vol, err = quad(pdf, 0, jnp.inf)
-        self.assertAlmostEqual(1.0, vol, delta=2 * err)
+        self.assertAlmostEqual(1.0, vol, places=6)
         vol, err = quad(tfm_pdf, -5, 5)
-        self.assertAlmostEqual(1.0, vol, delta=2 * err)
+        self.assertAlmostEqual(1.0, vol, places=6)
 
 
 if __name__ == "__main__":
