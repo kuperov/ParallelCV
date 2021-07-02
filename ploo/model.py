@@ -112,13 +112,13 @@ class Posterior(object):
             f"using {cv_chains:,} chains..."
         )
 
-        def cond_pred(cv_fold: CVFold, inf_params: InfParams) -> jnp.DeviceArray:
+        def log_cond_pred(inf_params: InfParams, cv_fold: CVFold) -> jnp.DeviceArray:
             model_params = self.model.to_model_params(inf_params)
-            self.model.log_cond_pred(cv_fold, model_params)
+            return self.model.log_cond_pred(model_params, cv_fold)
 
         accumulator, states = cross_validate(
             self.model.cv_potential,
-            self.model.log_cond_pred,
+            log_cond_pred,
             self.warmup,
             self.model.cv_folds(),
             draws,
@@ -187,14 +187,19 @@ class CrossValidation(object):
         self.draws = draws
         self.chains = chains
         self.folds = folds
+        self.elpd = float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
+        self.elpd_se = float(
+            jnp.std(self.accumulator.sum_log_pred_dens / self.draws)
+            / jnp.sqrt(self.draws)
+        )
+        self.cv_type = "LOO"
 
     @property
     def model(self) -> "Model":
         return self.post.model
 
-    @property
-    def elpd(self) -> float:
-        return float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
+    def __lt__(self, cv):
+        return self.elpd.__gt__(cv.elpd)  # note change of sign, want largest first
 
     @property
     def divergences(self):
@@ -219,13 +224,13 @@ class CrossValidation(object):
                 "",
                 f"    elpd = {self.elpd:.4f}",
                 "",
-                f"Calculated from {self.folds:,} folds ({self.chains:,} per fold, "
-                f"{self.chains*self.folds} total chains)",
+                f"Calculated from {self.folds:,} folds ({self.chains:,} chains per fold, "
+                f"{self.chains*self.folds:,} total)",
                 "",
                 f"Average acceptance rate {avg_accept*100:.1f}% (min {min_accept*100:.1f}%, "
                 f"max {max_accept*100:.1f}%)",
                 "",
-                f"Divergent chain count: {self.num_divergent_chains}",
+                f"Divergent chain count: {self.num_divergent_chains:,}",
             ]
         )
 
