@@ -1,7 +1,7 @@
 # flake8: noqa
-from .util import Progress, DummyProgress
+from .compare import compare
 from .hmc import WarmupResults, warmup
 from .model import Model, Posterior
-from .compare import compare
-from .transforms import LogTransform, IntervalTransform
 from .models import *
+from .transforms import IntervalTransform, LogTransform
+from .util import DummyProgress, Progress

@@ -1,9 +1,10 @@
-from ploo.model import CVFold, InfParams, ModelParams
-from ploo.transforms import LogTransform
-from jax import random, numpy as jnp
 import jax.scipy.stats as st
+from jax import numpy as jnp
+from jax import random
 
 import ploo
+from ploo.model import CVFold, InfParams, ModelParams
+from ploo.transforms import LogTransform
 
 
 class GaussianModel(ploo.Model):

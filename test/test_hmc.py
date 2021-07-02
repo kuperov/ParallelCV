@@ -1,13 +1,11 @@
-from jax.interpreters.xla import DeviceArray
 import unittest
 
-from jax import numpy as jnp, random
+from jax import numpy as jnp
+from jax import random
+from jax.interpreters.xla import DeviceArray
 
-from ploo import (
-    GaussianModel,
-    WarmupResults,
-)
-from ploo.hmc import warmup, full_data_inference, cross_validate
+from ploo import GaussianModel, WarmupResults
+from ploo.hmc import cross_validate, full_data_inference, warmup
 
 
 class TestInference(unittest.TestCase):

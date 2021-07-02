@@ -1,6 +1,9 @@
-from jax import random, numpy as jnp, jit
-import jax.scipy.stats as st
 from functools import partial
+
+import jax.scipy.stats as st
+from jax import jit
+from jax import numpy as jnp
+from jax import random
 
 import ploo
 

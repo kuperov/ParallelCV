@@ -49,7 +49,7 @@ notebook_keypair.ignore/notebook_keypair.rsa:
 	ssh-keygen -f `pwd`/notebook_keypair.nogit/notebook_keypair.rsa -t rsa -N ''
 
 black:
-	# format code
+	venv/bin/isort --profile black ploo test
 	venv/bin/black ploo test
 
 lint:

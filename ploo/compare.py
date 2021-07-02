@@ -1,6 +1,8 @@
 from typing import Dict, List, Tuple
-from .model import CrossValidation
+
 from tabulate import tabulate
+
+from .model import CrossValidation
 
 
 class ModelComparison(object):

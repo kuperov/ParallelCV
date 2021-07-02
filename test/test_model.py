@@ -1,12 +1,12 @@
-from ploo.util import DummyProgress
-from ploo.model import CVFold, InfParams, ModelParams
 import unittest
 
 import jax
 from jax import numpy as jnp
 from jax.scipy import stats as st
 
-from ploo import Model, LogTransform, compare
+from ploo import LogTransform, Model, compare
+from ploo.model import CVFold, InfParams, ModelParams
+from ploo.util import DummyProgress
 
 
 class _GaussianVarianceModel(Model):

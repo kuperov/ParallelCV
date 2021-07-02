@@ -5,12 +5,14 @@ for use as a driver for cross-validation.
 from typing import Callable, Dict, List, NamedTuple, Tuple, Union
 
 import jax
-from jax import numpy as jnp, scipy as jscipy, random, lax, vmap
-from jax.flatten_util import ravel_pytree
 import numpy as np
-
 from blackjax import nuts, stan_warmup
-
+from jax import lax
+from jax import numpy as jnp
+from jax import random
+from jax import scipy as jscipy
+from jax import vmap
+from jax.flatten_util import ravel_pytree
 
 Array = Union[np.ndarray, jnp.DeviceArray]
 PyTree = Union[Dict, List, Tuple]

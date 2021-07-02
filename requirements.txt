@@ -1,4 +1,5 @@
+arviz
+blackjax
 jax
 jaxlib
-blackjax
 tabulate

@@ -1,4 +1,5 @@
 ipython
+isort
 jupyterlab
 matplotlib
 black

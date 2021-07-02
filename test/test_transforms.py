@@ -1,8 +1,8 @@
 import unittest
 
 from jax import numpy as jnp
-from scipy.integrate import quad
 from scipy import stats as st
+from scipy.integrate import quad
 
 from ploo.transforms import LogTransform
 

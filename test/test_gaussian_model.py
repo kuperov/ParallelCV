@@ -1,12 +1,12 @@
-import unittest
 import os
+import unittest
 
-from jax import numpy as jnp
-from scipy import stats as st
 import numpy as np
 import pandas
+from jax import numpy as jnp
+from scipy import stats as st
 
-from ploo import Posterior, DummyProgress, GaussianModel
+from ploo import DummyProgress, GaussianModel, Posterior
 
 
 def fixture(fname):

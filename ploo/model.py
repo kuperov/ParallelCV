@@ -1,22 +1,22 @@
 from typing import Callable, Dict, Tuple, Union
 
-from jax import random, vmap, numpy as jnp
-from scipy import stats as sst
-
 import matplotlib.pyplot as plt
+from arviz import InferenceData
+from jax import numpy as jnp
+from jax import random, vmap
+from scipy import stats as sst
 from tabulate import tabulate
 
-from .util import Progress, Timer
 from .hmc import (
     CrossValidationState,
-    InfParams,
     CVHMCState,
+    InfParams,
     WarmupResults,
-    warmup,
-    full_data_inference,
     cross_validate,
+    full_data_inference,
+    warmup,
 )
-
+from .util import Progress, Timer
 
 # model parameters are in a constrained coordinate space
 ModelParams = Dict[str, jnp.DeviceArray]
@@ -29,10 +29,11 @@ class Posterior(object):
     """ploo posterior: captures full-data and loo results
 
     Members:
-        model: Model instance this was created from
-        post_draws: posterior draw array
-        cv_draws: cross-validation draws
-        seed: seed used when invoking inference
+        model:      Model instance this was created from
+        post_draws: map of posterior draw arrays, keyed by variable, with axes
+                    (chain, draw, variable_axis0, ...)
+        cv_draws:   cross-validation draws
+        seed:       seed used when invoking inference
     """
 
     def __init__(
@@ -93,6 +94,16 @@ class Posterior(object):
             for par, draws in self.post_draws.position.items()
         ]
         return tabulate(table_rows, headers=table_headers)
+
+    def to_arviz(self):
+        """Constructs an ArviZ object.
+
+        Returns:
+            `InferenceData` object containing the posterior samples.
+        """
+        # axes need to be (chain, sample)
+        post_data = None  # FIXME: put into xarray format
+        return InferenceData(posterior=post_data)
 
     def cross_validate(self, draws=None, chains=None, rng_key=None):
         """Run cross-validation for this posterior.
@@ -222,7 +233,7 @@ class CrossValidation(object):
                 "Cross-validation summary",
                 "========================",
                 "",
-                f"    elpd = {self.elpd:.4f}",
+                f"    elpd = {self.elpd:.4f} (se {self.elpd_se:.4f})",
                 "",
                 f"Calculated from {self.folds:,} folds ({self.chains:,} chains per fold, "
                 f"{self.chains*self.folds:,} total)",
@@ -471,16 +482,11 @@ class Model(object):
 
         # map positions back to model coordinates
         position_model = vmap(self.to_model_params)(states.position)
-        states = CVHMCState(
-            position_model,
-            states.potential_energy,
-            states.potential_energy_grad,
-            states.cv_fold,
-        )
+        position_model = jnp.swapaxes(self.post_draws, axis1=0, axis2=1)
 
         return Posterior(
             self,
-            post_draws=states,
+            post_draws=position_model,
             seed=seed,
             chains=chains,
             draws=draws,

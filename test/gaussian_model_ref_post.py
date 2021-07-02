@@ -1,8 +1,9 @@
 # script to generate test/gaussian_post.csv
 
-import stan
-from ploo import GaussianModel
 import numpy as np
+import stan
+
+from ploo import GaussianModel
 
 model = """// gaussian model for unit tests
 data {
