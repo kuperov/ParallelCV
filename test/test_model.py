@@ -1,4 +1,5 @@
 import unittest
+from types import FunctionType
 
 import jax
 from jax import numpy as jnp
@@ -102,10 +103,14 @@ class TestModelParam(unittest.TestCase):
 
     def test_inference(self):
         post = self.model.inference(draws=1000, chains=4, out=DummyProgress())
+        # check delegated arviz methods are listed and actually functions
+        self.assertIn("plot_density", dir(post))
+        self.assertIsInstance(post.plot_density, FunctionType)
+        self.assertIn("loo", dir(post))
+        self.assertIsInstance(post.loo, FunctionType)
+        # sensible posterior?
         sig_sq_means = jnp.mean(post.post_draws["sigma_sq"])
         self.assertIsInstance(sig_sq_means, jnp.DeviceArray)
-        cv = post.cross_validate()
-        self.assertIsNotNone(cv)
         # smoke test summary table
         post_table = str(post)
         self.assertIn("4,000 draws", post_table)

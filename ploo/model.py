@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Tuple, Union
 
 import arviz as az
 import matplotlib.pyplot as plt
@@ -24,6 +24,10 @@ ModelParams = Dict[str, jnp.DeviceArray]
 
 # CV fold is either 1D or 2D integer index
 CVFold = Union[int, Tuple[int, int]]
+
+_ARVIZ_PLOT = [name for name in dir(az) if name.startswith("plot_")]
+_ARVIZ_OTHER = ["summary", "ess", "loo"]
+_ARVIZ_METHODS = _ARVIZ_PLOT + _ARVIZ_OTHER
 
 
 class _Posterior(az.InferenceData):
@@ -164,29 +168,30 @@ class _Posterior(az.InferenceData):
             folds=self.model.cv_folds(),
         )
 
-    def plot_trace(self, *args, **kwargs) -> None:
-        """Plot trace plots for posterior draws"""
-        az.plot_trace(self, *args, **kwargs)
-
-    def plot_density(self, par, combine=False):
-        """Kernel densities for full-data posteriors"""
-
     def __getattribute__(self, name: str) -> Any:
         """If the user invokes a plot_* function, delegate to ArviZ."""
-        delegate = name.startswith("plot_") or name in ["summary", "ess", "loo"]
-        if delegate and hasattr(az, name):
+        if name in _ARVIZ_METHODS:
             delegate_to = getattr(az, name)
 
             def plot_function(*args, **kwargs):
                 return delegate_to.__call__(self, *args, **kwargs)
 
+            # return copy of ArviZ docstring with some tweaks
             plot_function.__doc__ = (
-                f"**Note: {name} function delegated to arviz.{name}**"
-                f"\n\n{delegate_to.__doc__}"
+                (
+                    f"**Note: function delegated to ArviZ. See: help(arviz.{name})**"
+                    f"\n\n{delegate_to.__doc__}"
+                )
+                .replace(f"{name}(data:", f"{name}(self:")
+                .replace("data: obj", "self:")
             )
             return plot_function
         else:
             return super().__getattribute__(name)
+
+    def __dir__(self) -> Iterable[str]:
+        parent_dir = super().__dir__()
+        return parent_dir + _ARVIZ_METHODS
 
 
 class CrossValidation(object):
