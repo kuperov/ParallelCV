@@ -54,6 +54,7 @@ black:
 
 lint:
 	venv/bin/black --check ploo test
+	venv/bin/isort --profile black --check-only ploo test
 	venv/bin/flake8 ploo test
 
 config: venv
