@@ -1,7 +1,8 @@
-from typing import Callable, Dict, Tuple, Union
+from typing import Any, Callable, Dict, Tuple, Union
 
+import arviz as az
 import matplotlib.pyplot as plt
-from arviz import InferenceData
+import xarray as xr
 from jax import numpy as jnp
 from jax import random, vmap
 from scipy import stats as sst
@@ -25,8 +26,11 @@ ModelParams = Dict[str, jnp.DeviceArray]
 CVFold = Union[int, Tuple[int, int]]
 
 
-class Posterior(object):
+class _Posterior(az.InferenceData):
     """ploo posterior: captures full-data and loo results
+
+    This is an ArviZ :class:`az.InferenceData` object, so you can use the full
+    range of ArviZ posterior exploration features directly on this object.
 
     Members:
         model:      Model instance this was created from
@@ -39,7 +43,7 @@ class Posterior(object):
     def __init__(
         self,
         model: "Model",
-        post_draws: jnp.DeviceArray,
+        post_draws: Dict[str, jnp.DeviceArray],
         seed: int,
         chains: int,
         draws: int,
@@ -55,21 +59,31 @@ class Posterior(object):
         self.warmup = warmup
         self.rng_key = rng_key
         self.print = print
+        # construct xarrays for ArviZ
+        # FIXME: this incorrectly assumes univariate parameters
+        posterior = xr.Dataset(
+            {var: (["chain", "draw"], drws) for var, drws in self.post_draws.items()},
+            coords={
+                "chain": (["chain"], jnp.arange(self.chains)),
+                "draw": (["draw"], jnp.arange(self.draws)),
+            },
+        )
+        super().__init__(posterior=posterior)
 
-    def __repr__(self) -> str:
+    def __str__(self) -> str:
         title = f"{self.model.name} inference summary"
-        arg0 = next(iter(self.post_draws.position))
-        it, ch = self.post_draws.position[arg0].shape
+        arg0 = next(iter(self.post_draws))  # FIXME: use arviz api to do this
+        ch, it = self.post_draws[arg0].shape[:2]
         desc_rows = [
             title,
             "=" * len(title),
             "",
             f"{it*ch:,} draws from {it:,} iterations on {ch:,} chains with seed {self.seed}",
             "",
-        ] + [self.post_table()]
+        ] + [self._post_table()]
         return "\n".join(desc_rows)
 
-    def post_table(self) -> str:
+    def _post_table(self) -> str:
         """Construct a summary table for posterior draws"""
         table_headers = [
             "Parameter",
@@ -91,19 +105,9 @@ class Posterior(object):
                 f"({jnp.std(draws):.2f})",
             ]
             + [f"{q:.02f}" for q in jnp.quantile(draws, table_quantiles)]
-            for par, draws in self.post_draws.position.items()
+            for par, draws in self.post_draws.items()
         ]
         return tabulate(table_rows, headers=table_headers)
-
-    def to_arviz(self):
-        """Constructs an ArviZ object.
-
-        Returns:
-            `InferenceData` object containing the posterior samples.
-        """
-        # axes need to be (chain, sample)
-        post_data = None  # FIXME: put into xarray format
-        return InferenceData(posterior=post_data)
 
     def cross_validate(self, draws=None, chains=None, rng_key=None):
         """Run cross-validation for this posterior.
@@ -160,21 +164,29 @@ class Posterior(object):
             folds=self.model.cv_folds(),
         )
 
-    def trace_plot(self, par, figsize=(16, 8)) -> None:
+    def plot_trace(self, *args, **kwargs) -> None:
         """Plot trace plots for posterior draws"""
-        plt.plot(self.post_draws.position[par][:, :])
+        az.plot_trace(self, *args, **kwargs)
 
-    def density(self, par, combine=False):
+    def plot_density(self, par, combine=False):
         """Kernel densities for full-data posteriors"""
-        all_draws = self.post_draws.position[par]
-        if combine:
-            all_draws = jnp.expand_dims(jnp.reshape(all_draws, (-1,)), axis=1)
-        for i in range(all_draws.shape[1]):
-            draws = all_draws[:, i]
-            kde = sst.gaussian_kde(draws)
-            xs = jnp.linspace(min(draws), max(draws), 1_000)
-            plt.plot(xs, kde(xs))
-        plt.title(f"{par} posterior density")
+
+    def __getattribute__(self, name: str) -> Any:
+        """If the user invokes a plot_* function, delegate to ArviZ."""
+        delegate = name.startswith("plot_") or name in ["summary", "ess", "loo"]
+        if delegate and hasattr(az, name):
+            delegate_to = getattr(az, name)
+
+            def plot_function(*args, **kwargs):
+                return delegate_to.__call__(self, *args, **kwargs)
+
+            plot_function.__doc__ = (
+                f"**Note: {name} function delegated to arviz.{name}**"
+                f"\n\n{delegate_to.__doc__}"
+            )
+            return plot_function
+        else:
+            return super().__getattribute__(name)
 
 
 class CrossValidation(object):
@@ -185,7 +197,7 @@ class CrossValidation(object):
 
     def __init__(
         self,
-        post: Posterior,
+        post: _Posterior,
         cv_accumulator: CrossValidationState,
         cv_states: CVHMCState,
         draws: int,
@@ -435,7 +447,7 @@ class Model(object):
         seed: int = 42,
         out: Progress = None,
         warmup_results=None,
-    ) -> Posterior:
+    ) -> _Posterior:
         """Run HMC with full dataset, tuned by Stan+NUTS warmup
 
         Keyword arguments:
@@ -482,11 +494,15 @@ class Model(object):
 
         # map positions back to model coordinates
         position_model = vmap(self.to_model_params)(states.position)
-        position_model = jnp.swapaxes(self.post_draws, axis1=0, axis2=1)
+        # want axes to be (chain, draws, ... <variable dims> ...)
+        rearranged_positions = {
+            var: jnp.swapaxes(draws, axis1=0, axis2=1)
+            for (var, draws) in position_model.items()
+        }
 
-        return Posterior(
+        return _Posterior(
             self,
-            post_draws=position_model,
+            post_draws=rearranged_positions,
             seed=seed,
             chains=chains,
             draws=draws,

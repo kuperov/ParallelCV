@@ -75,9 +75,9 @@ class _GaussianVarianceModel(Model):
 
 class TestModelParam(unittest.TestCase):
     def setUp(self) -> None:
-        y = jnp.array([5.0])
+        self.y = jnp.array([5.0])
         self.model = _GaussianVarianceModel(
-            y, mean=0.0, prior_shape=2.0, prior_rate=2.0
+            self.y, mean=0.0, prior_shape=2.0, prior_rate=2.0
         )
 
     def test_log_transform(self):
@@ -102,9 +102,16 @@ class TestModelParam(unittest.TestCase):
 
     def test_inference(self):
         post = self.model.inference(draws=1000, chains=4, out=DummyProgress())
+        sig_sq_means = jnp.mean(post.post_draws["sigma_sq"])
+        self.assertIsInstance(sig_sq_means, jnp.DeviceArray)
         cv = post.cross_validate()
-        mu_means = jnp.mean(cv.states.position["sigma_sq"])
-        self.assertIsNotNone(mu_means)
+        self.assertIsNotNone(cv)
+        # smoke test summary table
+        post_table = str(post)
+        self.assertIn("4,000 draws", post_table)
+        self.assertIn("1,000 iterations", post_table)
+        self.assertIn("4 chains", post_table)
+        self.assertIn("sigma_sq", post_table)
 
 
 class TestComparisons(unittest.TestCase):

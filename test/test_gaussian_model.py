@@ -6,7 +6,8 @@ import pandas
 from jax import numpy as jnp
 from scipy import stats as st
 
-from ploo import DummyProgress, GaussianModel, Posterior
+from ploo import DummyProgress, GaussianModel
+from ploo.model import _Posterior
 
 
 def fixture(fname):
@@ -70,25 +71,18 @@ class TestGaussian(unittest.TestCase):
             seed=42,
             out=DummyProgress(),
         )
-        self.assertIsInstance(post, Posterior)
+        self.assertIsInstance(post, _Posterior)
         self.assertEqual(post.seed, 42)
         self.assertIs(gauss, post.model)
         p0 = next(iter(gauss.parameters()))
-        self.assertEqual(post.post_draws.position[p0].shape, (1000, 4))
+        self.assertEqual(post.post_draws[p0].shape, (4, 1000))
 
-        self.assertAlmostEqual(
-            jnp.mean(y), jnp.mean(post.post_draws.position["mu"]), places=1
-        )
-        self.assertAlmostEqual(
-            jnp.std(y), jnp.mean(post.post_draws.position["sigma"]), places=1
-        )
+        self.assertAlmostEqual(jnp.mean(y), jnp.mean(post.post_draws["mu"]), places=1)
+        self.assertAlmostEqual(jnp.std(y), jnp.mean(post.post_draws["sigma"]), places=1)
 
         # Because Dan and Lauren like hypothesis tests so much
-        draws = post.post_draws.position
-        mu_draws = draws["mu"].reshape((-1,))
-        sigma_draws = draws["sigma"].reshape(
-            -1,
-        )
+        mu_draws = post.post_draws["mu"].reshape((-1,))
+        sigma_draws = post.post_draws["sigma"].reshape((-1,))
         stan_post = pandas.read_csv(fixture("gaussian_post.csv"))
         ks_mu = st.kstest(stan_post["mu"], mu_draws)
         ks_sigma = st.kstest(stan_post["sigma"], sigma_draws)
