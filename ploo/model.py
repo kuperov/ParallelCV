@@ -10,7 +10,6 @@ from tabulate import tabulate
 
 from .hmc import (
     CrossValidationState,
-    CVHMCState,
     InfParams,
     WarmupResults,
     cross_validate,
@@ -113,7 +112,9 @@ class _Posterior(az.InferenceData):
         ]
         return tabulate(table_rows, headers=table_headers)
 
-    def cross_validate(self, draws=None, chains=None, rng_key=None):
+    def cross_validate(
+        self, draws: int = None, chains: int = None, rng_key: jnp.DeviceArray = None
+    ):
         """Run cross-validation for this posterior.
 
         Keyword arguments:
@@ -123,7 +124,7 @@ class _Posterior(az.InferenceData):
         """
         chains = chains or self.chains
         rng_key = rng_key or self.rng_key
-        draws = draws or self.draws
+        draws = int(draws or self.draws)
         timer = Timer()
         cv_chains = self.chains * self.model.cv_folds()
         self.print(
@@ -152,20 +153,20 @@ class _Posterior(az.InferenceData):
         # map positions back to model coordinates
         # FIXME: if we can evaluate objective online, this will not be necessary
         position_model = vmap(self.model.to_model_params)(states.position)
-        states = CVHMCState(
-            position_model,
-            states.potential_energy,
-            states.potential_energy_grad,
-            states.cv_fold,
-        )
+        # want axes to be (chain, draws, ... <variable dims> ...)
+        rearranged_draws = {
+            var: jnp.swapaxes(draws, axis1=0, axis2=1)
+            for (var, draws) in position_model.items()
+        }
 
         return CrossValidation(
             self,
             accumulator,
-            states,
+            rearranged_draws,
             draws=draws,
             chains=chains,
             folds=self.model.cv_folds(),
+            fold_indexes=jnp.arange(self.model.cv_folds()),
         )
 
     def __getattribute__(self, name: str) -> Any:
@@ -204,15 +205,16 @@ class CrossValidation(object):
         self,
         post: _Posterior,
         cv_accumulator: CrossValidationState,
-        cv_states: CVHMCState,
+        states: Dict[str, jnp.DeviceArray],
         draws: int,
         chains: int,
         folds: int,
+        fold_indexes: jnp.DeviceArray,
     ) -> None:
         self.post = post
         self.accumulator = cv_accumulator
-        self.states = cv_states
-        self.draws = draws
+        self.states = states
+        self.draws = int(draws)
         self.chains = chains
         self.folds = folds
         self.elpd = float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
@@ -220,6 +222,7 @@ class CrossValidation(object):
             jnp.std(self.accumulator.sum_log_pred_dens / self.draws)
             / jnp.sqrt(self.draws)
         )
+        self.fold_indexes = fold_indexes
         self.cv_type = "LOO"
 
     @property
@@ -228,6 +231,28 @@ class CrossValidation(object):
 
     def __lt__(self, cv):
         return self.elpd.__gt__(cv.elpd)  # note change of sign, want largest first
+
+    def arviz(self, cv_fold):
+        """Retrieves ArviZ :class:`az.InferenceData` object for a CV fold
+
+        Args:
+            cv_fold: index of CV fold corresponding to desired posterior
+        """
+        chain_folds = jnp.repeat(self.fold_indexes, self.chains)
+        chain_i = chain_folds == cv_fold
+        if not jnp.sum(chain_i):
+            raise Exception("No chains match CV fold {self.cv_fold}")
+        posterior = xr.Dataset(
+            {
+                var: (["chain", "draw"], jnp.compress(chain_i, drws, axis=0))
+                for var, drws in self.states.items()
+            },
+            coords={
+                "chain": (["chain"], jnp.arange(self.chains)),
+                "draw": (["draw"], jnp.arange(self.draws)),
+            },
+        )
+        return az.InferenceData(posterior=posterior)
 
     @property
     def divergences(self):
@@ -272,7 +297,7 @@ class CrossValidation(object):
         fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
         for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
-            all_draws = self.states.position[par][:, chain_indexes]
+            all_draws = self.states.position[par][chain_indexes, :]
             if combine:
                 all_draws = jnp.expand_dims(jnp.reshape(all_draws, (-1,)), axis=1)
             for i in range(self.chains):
@@ -290,7 +315,7 @@ class CrossValidation(object):
         fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
         for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
-            ax.plot(self.states.position[par][:, chain_indexes])
+            ax.plot(self.states.position[par][chain_indexes, :])
 
 
 class Model(object):
