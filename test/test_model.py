@@ -2,6 +2,7 @@ import unittest
 from types import FunctionType
 
 import jax
+from arviz.data.inference_data import InferenceData
 from jax import numpy as jnp
 from jax.scipy import stats as st
 
@@ -126,12 +127,19 @@ class TestComparisons(unittest.TestCase):
         m1 = _GaussianVarianceModel(y, mean=0.0)  # good
         m2 = _GaussianVarianceModel(y, mean=-10.0)  # bad
         m3 = _GaussianVarianceModel(y, mean=50.0)  # awful
-        m1_post = m1.inference(out=DummyProgress())
-        m2_post = m2.inference(out=DummyProgress())
-        m3_post = m3.inference(out=DummyProgress())
+        m1_post = m1.inference(draws=1e3, chains=4, out=DummyProgress())
+        m2_post = m2.inference(draws=1e3, chains=4, out=DummyProgress())
+        m3_post = m3.inference(draws=1e3, chains=4, out=DummyProgress())
         m1_cv = m1_post.cross_validate()
         m2_cv = m2_post.cross_validate()
         m3_cv = m3_post.cross_validate()
+        # check just CV posterior m1
+        self.assertTrue(jnp.all(m1_cv.fold_indexes == jnp.arange(50)))
+        m1_av_f0 = m1_cv.arviz(cv_fold=0)
+        self.assertIsInstance(m1_av_f0, InferenceData)
+        m1_av_f1 = m1_cv.arviz(cv_fold=1)
+        self.assertIsInstance(m1_av_f1, InferenceData)
+        # check comparisons across CVs
         cmp_res = compare(m1_cv, m2_cv, m3_cv)
         self.assertEqual(cmp_res.names(), ["model0", "model1", "model2"])
         for m in ["LOO", "model0", "model1", "model2"]:
