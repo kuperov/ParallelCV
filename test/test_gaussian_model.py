@@ -1,5 +1,5 @@
-import os
 import unittest
+from test.util import fixture
 
 import numpy as np
 import pandas
@@ -8,10 +8,6 @@ from scipy import stats as st
 
 from ploo import DummyProgress, GaussianModel
 from ploo.model import _Posterior
-
-
-def fixture(fname):
-    return os.path.join(os.path.dirname(__file__), fname)
 
 
 class TestGaussian(unittest.TestCase):
