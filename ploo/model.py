@@ -91,7 +91,7 @@ class _Posterior(az.InferenceData):
         table_headers = [
             "Parameter",
             "Mean",
-            "(SE)",
+            "MCSE",
             "1%",
             "5%",
             "25%",
@@ -105,7 +105,7 @@ class _Posterior(az.InferenceData):
             [
                 par,
                 f"{jnp.mean(draws):4.2f}",
-                f"({jnp.std(draws):.2f})",
+                f"({jnp.std(draws)/jnp.sqrt(self.draws*self.chains):.2f})",
             ]
             + [f"{q:.02f}" for q in jnp.quantile(draws, table_quantiles)]
             for par, draws in self.post_draws.items()
