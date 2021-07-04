@@ -17,6 +17,8 @@ from .hmc import (
     warmup,
 )
 from .util import Progress, Timer
+from .statistics import split_rhat
+
 
 # model parameters are in a constrained coordinate space
 ModelParams = Dict[str, jnp.DeviceArray]
@@ -95,10 +97,11 @@ class _Posterior(az.InferenceData):
             "1%",
             "5%",
             "25%",
-            "Median",
+            "Med",
             "75%",
             "95%",
             "99%",
+            "R̂ᵇ"
         ]
         table_quantiles = jnp.array([0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
         table_rows = [
@@ -108,6 +111,7 @@ class _Posterior(az.InferenceData):
                 f"({jnp.std(draws)/jnp.sqrt(self.draws*self.chains):.2f})",
             ]
             + [f"{q:.02f}" for q in jnp.quantile(draws, table_quantiles)]
+            + [split_rhat(draws)]
             for par, draws in self.post_draws.items()
         ]
         return tabulate(table_rows, headers=table_headers)
