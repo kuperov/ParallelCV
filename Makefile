@@ -9,8 +9,8 @@ The following targets are available:
   nb     start a jupyter notebook
   test   run unit tests
   venv   create the virtual environment in venv/
-  black  format code using the black package
-  lint   run code linter
+  pretty format code
+  lint   run code linters
   config first-time environment setup
   clean  remove generated files
 
@@ -48,7 +48,7 @@ venv:
 notebook_keypair.ignore/notebook_keypair.rsa:
 	ssh-keygen -f `pwd`/notebook_keypair.nogit/notebook_keypair.rsa -t rsa -N ''
 
-black:
+pretty:
 	venv/bin/isort --profile black ploo test
 	venv/bin/black ploo test
 
@@ -56,6 +56,7 @@ lint:
 	venv/bin/black --check ploo test
 	venv/bin/isort --profile black --check-only ploo test
 	venv/bin/flake8 ploo test
+	# venv/bin/pylint ploo test
 
 config: venv
 	# Configure the development environment, if not already

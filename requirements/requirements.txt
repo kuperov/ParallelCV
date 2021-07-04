@@ -2,4 +2,5 @@ arviz
 blackjax
 jax
 jaxlib
+matplotlib
 tabulate

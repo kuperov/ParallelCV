@@ -1,3 +1,7 @@
+"""ploo: package for parallel cross-validation
+
+This module compares models using cross-validation output
+"""
 from typing import Dict, List, Tuple
 
 from tabulate import tabulate
@@ -5,7 +9,7 @@ from tabulate import tabulate
 from .model import CrossValidation
 
 
-class ModelComparison(object):
+class ModelComparison:
     def __init__(
         self, ordered_cvs: List[Tuple[str, CrossValidation]], cv_type: str
     ) -> None:
@@ -15,8 +19,7 @@ class ModelComparison(object):
     def __getitem(self, key):
         if isinstance(key, str):
             return dict(self.ordered_cvs)[key]
-        else:
-            return self.ordered_cvs[key]
+        return self.ordered_cvs[key]
 
     def __repr__(self) -> str:
         title = f"{self.cv_type} Cross Validation Comparison"

@@ -86,14 +86,14 @@ class WarmupResults(NamedTuple):
 
         sv_code = da2c(self.starting_values)
         mm_code = da2c(jnp.array(self.mass_matrix))
-        py = (
+        python_code = (
             "WarmupResults(\n"
             f"    step_size={self.step_size},\n"
             f"    mass_matrix=jnp.array({mm_code}),\n"
             f"    starting_values={sv_code},\n"
             f"    int_steps={self.int_steps})"
         )
-        return py
+        return python_code
 
 
 def warmup(
@@ -111,8 +111,10 @@ def warmup(
     problems ever.
 
     Keyword args:
-        cv_potential:  potential function, takes model parameter and cross-validation fold
-        initial_value: an initial value, expressed in inference (unconstrained) parameters
+        cv_potential:  potential function, takes model parameter and cross-validation
+                       fold
+        initial_value: an initial value, expressed in inference (unconstrained)
+                       parameters
         warmup_steps:  number of warmup iterations
         num_start_pos: number of starting positions to extract
         rng_key:       random generator state

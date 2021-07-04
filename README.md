@@ -16,7 +16,7 @@ On a reasonable OS you should be able to create the virtual environment that con
     cd ploo
     make config
 
-This will add a pre-commit git hook that runs the linter. If you must use Windows, the makefiles probably won't work for you.
+This will add a pre-commit git hook that runs the linter. The Makefile probably won't work on Windows without WSL.
 
 Check everything is working by running the unit tests:
 
@@ -24,7 +24,7 @@ Check everything is working by running the unit tests:
 
 Before commiting code, run the code formatter and linter (the pre-commit hook should lint automatically):
 
-    make black
+    make pretty
     make lint
 
 Example

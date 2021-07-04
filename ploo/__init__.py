@@ -1,3 +1,6 @@
+"""ploo is a package for parallel cross-validation
+"""
+
 # flake8: noqa
 from .compare import compare
 from .hmc import WarmupResults, warmup
