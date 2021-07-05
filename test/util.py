@@ -14,6 +14,8 @@ def fixture(fname):
 
 
 class TestCase(unittest.TestCase):
+    """TestCase with a few convenience test methods."""
+
     def assertClose(self, array1, array2, msg=None, **kwargs) -> None:
         """Assert all elements of array1 and array2 are close in value.
 
