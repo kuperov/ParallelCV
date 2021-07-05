@@ -14,6 +14,8 @@ from jax import random
 
 CVFold = Union[int, Tuple[int, int], Tuple[int, int, int]]
 
+Coordinate = Union[int, Tuple[int, int], Tuple[int, int, int]]
+
 
 class CrossValidation(Iterable):
     """Abstract class representing a structured cross-validation.
@@ -21,31 +23,58 @@ class CrossValidation(Iterable):
     Each instance is instantiated with a numpy-style `shape` that
     denotes the dimensions of the likelihood contribution array.
 
-    Iterating over a cross-validation yields an iterable of indicator
-    mask arrays (one per fold) that should be multiplied elementwise
-    with the likelihood contribution arrays to produce the likelihood
-    for the model in each fold.
+    Iterating over a cross-validation yields an iterable of fold
+    identifiers. These fold identifiers are keys that identify:
+
+      * indicator mask arrays (one per fold) that should be multiplied
+        elementwise with the likelihood contribution arrays to produce
+        the likelihood for the model in each fold; and
+
+      * lists of coordinates for the same arrays to be used for
+        evaluating conditional predictives.
     """
 
-    def __init__(self) -> None:
-        """Abstract class: not implemented"""
-        raise NotImplementedError()
+    def __init__(self, name: str) -> None:
+        self.name = name
 
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
+        """Array to multiply elementwise with likelihood contributions
+
+        Keyword arguments:
+            fold: a cross-validation fold
+
+        Returns:
+            jnp.DeviceArray of shape `self.shape`
+        """
         raise NotImplementedError()
 
     def __repr__(self) -> str:
         return f"{self.name} cross-validation"
 
-    def summary_matrix(self) -> jnp.DeviceArray:
+    def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
+        """Returns CV coordinates for the given fold.
+
+        The coordinates refer to the shape of the likelihood contribution array.
+
+        Keyword arguments:
+            fold: fold identifier (integers or tuples)
+
+        Returns:
+            iterator over coordinates (integers or tuples)
+        """
+        raise NotImplementedError()
+
+    def summary_array(self) -> jnp.DeviceArray:
         """Generate summary matrix for 1D CV schemes.
 
         Basically stacks masks on top of each other, row by row.
+        For 1D data, output is a 2D array, etc.
 
         Returns
             jnp.DeviceArray
         """
-        return NotImplementedError()
+        arrays = [self.mask_for(fold) for fold in self]
+        return np.stack(arrays)
 
 
 class LOO(CrossValidation):
@@ -53,8 +82,6 @@ class LOO(CrossValidation):
 
     Each fold removes just one likelihood contribution.
     """
-
-    name = "LOO"
 
     def __init__(self, shape) -> None:
         """Create a new LOO CrossValidation.
@@ -65,17 +92,20 @@ class LOO(CrossValidation):
         self.shape = shape if isinstance(shape, Sequence) else (shape,)
         assert len(self.shape) >= 1 and len(self.shape) <= 3
         self.folds = np.prod(self.shape)
+        super().__init__("LOO")
 
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
         return jnp.ones(shape=self.shape).at[fold].set(0.0)
+
+    def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
+        return [fold]
 
     def __iter__(self) -> Iterator[CVFold]:
         if len(self.shape) == 1:
             # integer indexes
             return iter(range(self.shape[0]))
-        else:
-            # tuple indexes
-            return np.ndindex(self.shape)
+        # tuple indexes
+        return np.ndindex(self.shape)
 
 
 class LFO(CrossValidation):
@@ -84,8 +114,6 @@ class LFO(CrossValidation):
     Each fold removes future observations, leaving a margin of v
     observations at the start.
     """
-
-    name = "LFO"
 
     def __init__(self, shape, margin: int) -> None:
         """Create a new leave-future-out (LFO) CrossValidation.
@@ -100,15 +128,20 @@ class LFO(CrossValidation):
         self.margin = margin
         assert len(self.shape) == 1
         self.folds = self.shape[0] - self.margin
+        super().__init__("LFO")
 
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
-        return jnp.ones(shape=self.shape).at[fold + self.margin].set(0.0)
+        # fold is coordinate of dropped observation
+        return jnp.ones(shape=self.shape).at[fold].set(0.0)
+
+    def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
+        return [fold]
 
     def __iter__(self) -> Iterator[CVFold]:
         # Fold indexes still start at zero, but don't correspond to
         # the missing contribution. We could have gone either way here
         # but this approach helps check we aren't breaking the ADT elsewhere
-        return iter(range(self.shape[0] - self.margin))
+        return iter(range(self.margin, self.shape[0]))
 
 
 class KFold(CrossValidation):
@@ -127,22 +160,27 @@ class KFold(CrossValidation):
         """
         self.shape = shape if isinstance(shape, Sequence) else (shape,)
         self.k = k
-        self.name = f"Random {k}-fold"
         # randomly allocate coords to folds
         prototype_masks = {index: np.ones(shape=shape) for index in range(self.k)}
+        self.coords = {index: [] for index in range(self.k)}
         # I know we're mixing numpy and jnp here but we want to make sure
         # we use the jax random state
-        coord_list = list(np.ndindex(*self.shape))
-        all_coords = random.permutation(key=rng_key, x=jnp.array(coord_list))
+        shuffled = random.permutation(key=rng_key,
+            x=jnp.array(list(np.ndindex(*self.shape))))
         # this obviously can't be traced but that shouldn't be an issue because
         # it only happens once at the start of the CV procedure
-        for i, coord in enumerate(all_coords):
+        for i, coord in enumerate(shuffled):
             prototype_masks[i % k][tuple(coord)] = 0.0
+            self.coords[i % k].append(coord)
         self.masks = {fold: jnp.array(mask) for fold, mask in prototype_masks.items()}
         self.folds = self.k
+        super().__init__(f"Random {k}-fold")
 
     def __iter__(self) -> Iterator[CVFold]:
         return iter(range(self.k))
 
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
         return self.masks[fold]
+
+    def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
+        return self.coords[fold]
