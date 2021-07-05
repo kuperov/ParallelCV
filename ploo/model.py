@@ -24,7 +24,7 @@ from .hmc import (
     full_data_inference,
     warmup,
 )
-from .statistics import split_rhat
+from .statistics import ess, split_rhat
 from .util import Progress, Timer
 
 # model parameters are in a constrained coordinate space
@@ -108,19 +108,20 @@ class _Posterior(az.InferenceData):
             "75%",
             "95%",
             "99%",
-            "R̂ᵇ",
+            "R̂ᵇᵘˡᵏ",
+            "Sᵉᶠᶠ",
         ]
         table_quantiles = jnp.array([0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
-        table_rows = [
-            [
-                par,
-                f"{jnp.mean(draws):4.2f}",
-                f"({jnp.std(draws)/jnp.sqrt(self.draws*self.chains):.2f})",
-            ]
-            + [f"{q:.02f}" for q in jnp.quantile(draws, table_quantiles)]
-            + [split_rhat(draws)]
-            for par, draws in self.post_draws.items()
-        ]
+
+        def table_row(par, draws):
+            eff_sample = ess(draws)
+            mcse = jnp.std(draws) / jnp.sqrt(eff_sample)
+            cols1 = [par, f"{jnp.mean(draws):4.2f}", f"({mcse:.2f})"]
+            cols2 = [f"{q:.02f}" for q in jnp.quantile(draws, table_quantiles)]
+            cols3 = [split_rhat(draws), round(eff_sample)]
+            return cols1 + cols2 + cols3
+
+        table_rows = [table_row(par, draws) for par, draws in self.post_draws.items()]
         return tabulate(table_rows, headers=table_headers)
 
     def cross_validate(
