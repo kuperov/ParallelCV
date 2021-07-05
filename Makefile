@@ -45,9 +45,6 @@ venv:
 	venv/bin/pip3 install -r requirements/requirements-dev.txt
 	venv/bin/python3 setup.py develop
 
-notebook_keypair.ignore/notebook_keypair.rsa:
-	ssh-keygen -f `pwd`/notebook_keypair.nogit/notebook_keypair.rsa -t rsa -N ''
-
 pretty:
 	venv/bin/isort --profile black ploo test
 	venv/bin/black ploo test
