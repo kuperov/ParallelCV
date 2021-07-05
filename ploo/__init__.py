@@ -6,6 +6,7 @@ Alex Cooper <alex@acooper.org>
 
 # flake8: noqa
 from .compare import compare
+from .cv import LFO, LOO, KFold
 from .hmc import WarmupResults, warmup
 from .model import Model
 from .models import *
