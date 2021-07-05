@@ -31,9 +31,6 @@ class CrossValidation(Iterable):
         """Abstract class: not implemented"""
         raise NotImplementedError()
 
-    def folds(self) -> int:
-        raise NotImplementedError()
-
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
         raise NotImplementedError()
 
@@ -67,15 +64,18 @@ class LOO(CrossValidation):
         """
         self.shape = shape if isinstance(shape, Sequence) else (shape,)
         assert len(self.shape) >= 1 and len(self.shape) <= 3
-
-    def folds(self) -> int:
-        return np.prod(self.shape)
+        self.folds = np.prod(self.shape)
 
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
         return jnp.ones(shape=self.shape).at[fold].set(0.0)
 
     def __iter__(self) -> Iterator[CVFold]:
-        return iter(range(self.shape[0]))
+        if len(self.shape) == 1:
+            # integer indexes
+            return iter(range(self.shape[0]))
+        else:
+            # tuple indexes
+            return np.ndindex(self.shape)
 
 
 class LFO(CrossValidation):
@@ -99,9 +99,7 @@ class LFO(CrossValidation):
         self.shape = shape if isinstance(shape, Sequence) else (shape,)
         self.margin = margin
         assert len(self.shape) == 1
-
-    def folds(self):
-        return self.shape[0] - self.margin
+        self.folds = self.shape[0] - self.margin
 
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
         return jnp.ones(shape=self.shape).at[fold + self.margin].set(0.0)
@@ -139,11 +137,9 @@ class KFold(CrossValidation):
         # this obviously can't be traced but that shouldn't be an issue because
         # it only happens once at the start of the CV procedure
         for i, coord in enumerate(all_coords):
-            prototype_masks[i % k][coord] = 0.0
+            prototype_masks[i % k][tuple(coord)] = 0.0
         self.masks = {fold: jnp.array(mask) for fold, mask in prototype_masks.items()}
-
-    def folds(self) -> int:
-        return self.k
+        self.folds = self.k
 
     def __iter__(self) -> Iterator[CVFold]:
         return iter(range(self.k))
