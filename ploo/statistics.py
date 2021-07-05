@@ -1,3 +1,11 @@
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+
+Diagnostic statistics for MCMC chains.
+"""
+
 from jax import numpy as jnp
 
 
@@ -16,9 +24,11 @@ def split_rhat(samples: jnp.DeviceArray) -> jnp.DeviceArray:
 
       .. math::
 
-         B = \frac{N}{M-1}\sum_{m=1}^N\left(\bar{\theta}^{(\cdot m)} - \bar{\theta}^{\cdot\cdot}\right)^2
+         B = \frac{N}{M-1}\sum_{m=1}^N\left(\bar{\theta}^{(\cdot m)}
+         - \bar{\theta}^{\cdot\cdot}\right)^2
 
-         W = \frac{1}{M}\sum_{m=1}^M \left[\frac{1}{N-1}\sum_{m=1}^N\left(\theta^{(nm)}-\bar{\theta}^{(\cdot m)}\right)\right]^2
+         W = \frac{1}{M}\sum_{m=1}^M \left[\frac{1}{N-1}\sum_{m=1}^N
+         \left(\theta^{(nm)}-\bar{\theta}^{(\cdot m)}\right)\right]^2
 
     Then the split-:math:`\hat{R}` is given by
 
@@ -42,6 +52,3 @@ def split_rhat(samples: jnp.DeviceArray) -> jnp.DeviceArray:
     return jnp.sqrt((N - 1) / N + B / (W * N))
 
 
-def ess(samples):
-    r"""Effective sample size as described in Vehtari et al 2021."""
-    return 0.0

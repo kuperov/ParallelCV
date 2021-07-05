@@ -1,3 +1,8 @@
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+"""
 import unittest
 from types import FunctionType
 
@@ -33,7 +38,7 @@ class _GaussianVarianceModel(Model):
         self.prior_rate = prior_rate
         self.sigma_sq_transform = LogTransform()
 
-    def log_likelihood(self, cv_fold, model_params: ModelParams):
+    def log_likelihood(self, model_params: ModelParams, cv_fold):
         return jnp.sum(
             st.norm.logpdf(
                 self.y, loc=self.mean, scale=jnp.sqrt(model_params["sigma_sq"])

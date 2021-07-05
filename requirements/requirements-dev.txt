@@ -3,7 +3,8 @@ isort
 jupyterlab
 matplotlib
 black
-pystan
 pandas
+pylint
+pystan
 flake8
 flake8-bugbear

@@ -1,3 +1,11 @@
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+
+This module defines a model class that users can extend to implement
+arbitrary likelihood models.
+"""
 from typing import Any, Callable, Dict, Iterable, Tuple, Union
 
 import arviz as az
@@ -16,9 +24,8 @@ from .hmc import (
     full_data_inference,
     warmup,
 )
-from .util import Progress, Timer
 from .statistics import split_rhat
-
+from .util import Progress, Timer
 
 # model parameters are in a constrained coordinate space
 ModelParams = Dict[str, jnp.DeviceArray]
@@ -101,7 +108,7 @@ class _Posterior(az.InferenceData):
             "75%",
             "95%",
             "99%",
-            "R̂ᵇ"
+            "R̂ᵇ",
         ]
         table_quantiles = jnp.array([0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
         table_rows = [

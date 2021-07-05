@@ -1,3 +1,8 @@
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+"""
 import unittest
 from test.util import fixture
 
@@ -23,7 +28,7 @@ class TestStatistics(unittest.TestCase):
         self.assertAlmostEqual(float(sr_sigma), float(split["sigma"]), places=6)
 
     def test_ess(self):
-        # ess as described in Vehtari et al 2021
+        # ess as described in Vehtari et al 2021, Geyer 2011
         # compare to 6dp because we're using 32 bit arithmetic
         azess = az.ess(self.gaussian_post)
         sr_mu = ess(self.mu)

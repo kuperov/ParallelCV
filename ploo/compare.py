@@ -1,4 +1,7 @@
-"""ploo: package for parallel cross-validation
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
 
 This module compares models using cross-validation output
 """

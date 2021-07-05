@@ -1,4 +1,11 @@
-# script to generate test/gaussian_post.csv
+#!./venv/bin/python3
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+
+Script to generate test/gaussian_post.csv and test/gaussian.nc
+"""
 
 import arviz as az
 import numpy as np

@@ -1,4 +1,9 @@
-"""Implementation of HMC borrowed from blackjax and modified
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+
+Implementation of HMC borrowed from blackjax and modified
 for use as a driver for cross-validation.
 """
 
