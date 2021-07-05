@@ -5,17 +5,15 @@ Alex Cooper <alex@acooper.org>
 """
 
 import unittest
+from test.util import TestCase
 
 import numpy as np
 from jax import random
 
 from ploo import LFO, LOO, KFold
 
-from test.util import TestCase
-
 
 class TestCrossValidation(TestCase):
-
     def test_loo_linear(self):
         l0 = LOO(100)
         self.assertEqual(l0.shape, (100,))
@@ -27,6 +25,9 @@ class TestCrossValidation(TestCase):
         l1 = LOO((50,))
         self.assertEqual(l1.shape, (50,))
         self.assertEqual(list(l1), list(range(50)))
+
+    def test_loo_multidim(self):
+        self.fail()  # not done
 
     def test_lfo(self):
         lf0 = LFO(shape=20, margin=10)
@@ -49,6 +50,9 @@ class TestCrossValidation(TestCase):
         mask0 = k0.mask_for(0)
         self.assertEqual(mask0.shape, (100,))
         self.assertEqual(np.sum(mask0), 80)
+
+    def test_kfold_multidim(self):
+        self.fail()  # not done
 
 
 if __name__ == "__main__":
