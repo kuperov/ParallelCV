@@ -6,15 +6,13 @@ Alex Cooper <alex@acooper.org>
 This module compares models using cross-validation output
 """
 
-from typing import Callable, Iterable, Iterator, Sequence, Tuple, Union
+from typing import Callable, Iterable, Iterator, Sequence
 
 import numpy as np
 from jax import numpy as jnp
 from jax import random
 
-CVFold = Union[int, Tuple[int, int], Tuple[int, int, int]]
-
-Coordinate = Union[int, Tuple[int, int], Tuple[int, int, int]]
+CVFold = int
 
 
 class CrossValidationScheme(Iterable):
@@ -51,16 +49,16 @@ class CrossValidationScheme(Iterable):
     def __repr__(self) -> str:
         return f"{self.name} cross-validation"
 
-    def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
+    def coordinates_for(self, fold: CVFold) -> jnp.DeviceArray:
         """Returns CV coordinates for the given fold.
 
         The coordinates refer to the shape of the likelihood contribution array.
 
         Keyword arguments:
-            fold: fold identifier (integers or tuples)
+            fold: integer fold identifier
 
         Returns:
-            iterator over coordinates (integers or tuples)
+            coordinates as an integer array
         """
         raise NotImplementedError()
 
@@ -101,10 +99,10 @@ class CrossValidationScheme(Iterable):
         """
 
         def array_for_fold(fold_i):
-            # use numpy not JAX arrays because numpy arrays are mutable
+            # use mutable numpy arrays
             mask = np.array(self.mask_for(fold_i))
             for pred_i in self.coordinates_for(fold_i):
-                mask[pred_i] = 2.0
+                mask[pred_i] = -1.0
             return mask
 
         return np.stack([array_for_fold(i) for i in range(self.cv_folds())])
@@ -130,8 +128,8 @@ class LOO(CrossValidationScheme):
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
         return jnp.ones(shape=self.shape).at[fold].set(0.0)
 
-    def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
-        return [fold]
+    def coordinates_for(self, fold: CVFold) -> jnp.DeviceArray:
+        return jnp.array([fold])
 
     def cv_folds(self) -> int:
         return np.prod(self.shape)
@@ -168,17 +166,21 @@ class LFO(CrossValidationScheme):
         super().__init__("LFO")
 
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
-        # fold is coordinate of dropped observation
-        return jnp.ones(shape=self.shape).at[fold].set(0.0)
+        return jnp.concatenate(
+            [
+                jnp.ones(shape=(self.margin + fold,)),
+                jnp.zeros(shape=(self.shape[0] - fold - self.margin,)),
+            ]
+        )
 
-    def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
-        return [fold]
+    def coordinates_for(self, fold: CVFold) -> jnp.DeviceArray:
+        return jnp.array([fold + self.margin])
 
     def cv_folds(self) -> int:
         return self.shape[0] - self.margin
 
     def __iter__(self) -> Iterator[CVFold]:
-        return iter(range(self.margin, self.shape[0]))
+        return iter(range(self.shape[0] - self.margin))
 
 
 class KFold(CrossValidationScheme):
@@ -220,7 +222,7 @@ class KFold(CrossValidationScheme):
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
         return self.masks[fold]
 
-    def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
+    def coordinates_for(self, fold: CVFold) -> jnp.DeviceArray:
         return self.coords[fold]
 
     def cv_folds(self) -> int:

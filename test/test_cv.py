@@ -33,7 +33,7 @@ class TestCrossValidation(TestCase):
         self.assertClose(np.ones((100, 100)) - np.eye(100), linear_1_masks)
         linear_1_summary = linear_1.summary_array()
         self.assertEqual(linear_1_summary.shape, (100, 100))
-        self.assertClose(np.ones((100, 100)) + np.eye(100), linear_1_summary)
+        self.assertClose(np.ones((100, 100)) - 2 * np.eye(100), linear_1_summary)
         linear_2 = LOO((50,))
         self.assertEqual(linear_2.shape, (50,))
         self.assertEqual(list(linear_2), list(range(50)))
@@ -58,16 +58,17 @@ class TestCrossValidation(TestCase):
     def test_lfo(self):
         """Check folds and shape of linear LFO scheme"""
         lfo_1 = LFO(shape=20, margin=10)
-        self.assertEqual(list(range(10, 20)), list(lfo_1))
+        self.assertEqual(list(range(10)), list(lfo_1))
         self.assertEqual(10, lfo_1.folds)
         lfo_2 = LFO(shape=(20,), margin=15)
-        self.assertEqual(list(range(15, 20)), list(lfo_2))
+        self.assertEqual(list(range(5)), list(lfo_2))
         self.assertEqual(5, lfo_2.folds)
         lfo_2_mask0 = lfo_2.mask_for(next(iter(lfo_2)))
         self.assertEqual(lfo_2_mask0.shape, (20,))
-        self.assertEqual(lfo_2_mask0[15], 0.0)
-        for i in [0, 14, 16, 19]:
+        for i in [0, 14]:
             self.assertEqual(lfo_2_mask0[i], 1.0)
+        for i in [15, 19]:
+            self.assertEqual(lfo_2_mask0[i], 0.0)
 
     def test_kfold_linear(self):
         """Check folds and shape of linear k-fold scheme"""
