@@ -27,8 +27,8 @@ class TestCrossValidation(TestCase):
         self.assertEqual(linear_1_mask0[0], 0.0)
         self.assertEqual(linear_1_mask0[1], 1.0)
         linear_1_summary = linear_1.summary_array()
-        self.assertEqual(linear_1_summary.shape, (100,100))
-        self.assertClose(np.ones((100,100))- np.eye(100), linear_1_summary)
+        self.assertEqual(linear_1_summary.shape, (100, 100))
+        self.assertClose(np.ones((100, 100)) - np.eye(100), linear_1_summary)
         linear_2 = LOO((50,))
         self.assertEqual(linear_2.shape, (50,))
         self.assertEqual(list(linear_2), list(range(50)))
@@ -46,7 +46,7 @@ class TestCrossValidation(TestCase):
         self.assertEqual(np.sum(multi_1_mask0), multi_1.folds - 1)
         multi_1_summary = multi_1.summary_array()
         self.assertEqual(multi_1_summary.shape, (600, 20, 30))
-        self.assertEqual(np.sum(multi_1_summary), 20*30*(20*30-1))
+        self.assertEqual(np.sum(multi_1_summary), 20 * 30 * (20 * 30 - 1))
 
     def test_lfo(self):
         """Check folds and shape of linear LFO scheme"""

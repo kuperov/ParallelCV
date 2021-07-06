@@ -17,7 +17,7 @@ CVFold = Union[int, Tuple[int, int], Tuple[int, int, int]]
 Coordinate = Union[int, Tuple[int, int], Tuple[int, int, int]]
 
 
-class CrossValidation(Iterable):
+class CrossValidationScheme(Iterable):
     """Abstract class representing a structured cross-validation.
 
     Each instance is instantiated with a numpy-style `shape` that
@@ -77,7 +77,7 @@ class CrossValidation(Iterable):
         return np.stack(arrays)
 
 
-class LOO(CrossValidation):
+class LOO(CrossValidationScheme):
     """Leave-one-out cross validation.
 
     Each fold removes just one likelihood contribution.
@@ -108,7 +108,7 @@ class LOO(CrossValidation):
         return np.ndindex(self.shape)
 
 
-class LFO(CrossValidation):
+class LFO(CrossValidationScheme):
     """Leave-future-out cross validation.
 
     Each fold removes future observations, leaving a margin of v
@@ -144,7 +144,7 @@ class LFO(CrossValidation):
         return iter(range(self.margin, self.shape[0]))
 
 
-class KFold(CrossValidation):
+class KFold(CrossValidationScheme):
     """Random K-Fold cross validation
 
     Each fold removes N/K likelihood contributions
@@ -165,8 +165,9 @@ class KFold(CrossValidation):
         self.coords = {index: [] for index in range(self.k)}
         # I know we're mixing numpy and jnp here but we want to make sure
         # we use the jax random state
-        shuffled = random.permutation(key=rng_key,
-            x=jnp.array(list(np.ndindex(*self.shape))))
+        shuffled = random.permutation(
+            key=rng_key, x=jnp.array(list(np.ndindex(*self.shape)))
+        )
         # this obviously can't be traced but that shouldn't be an issue because
         # it only happens once at the start of the CV procedure
         for i, coord in enumerate(shuffled):

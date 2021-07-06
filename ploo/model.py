@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Iterable, Tuple, Union
 
 import arviz as az
 import matplotlib.pyplot as plt
+import numpy as np
 import xarray as xr
 from jax import numpy as jnp
 from jax import random, vmap
@@ -84,13 +85,14 @@ class _Posterior(az.InferenceData):
 
     def __str__(self) -> str:
         title = f"{self.model.name} inference summary"
-        arg0 = next(iter(self.post_draws))  # FIXME: use arviz api to do this
-        ch, it = self.post_draws[arg0].shape[:2]
+        arg0 = next(iter(self.post_draws))
+        chains, iters = self.post_draws[arg0].shape[:2]
         desc_rows = [
             title,
             "=" * len(title),
             "",
-            f"{it*ch:,} draws from {it:,} iterations on {ch:,} chains with seed {self.seed}",
+            f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} "
+            f"chains with seed {self.seed}",
             "",
         ] + [self._post_table()]
         return "\n".join(desc_rows)
@@ -163,7 +165,7 @@ class _Posterior(az.InferenceData):
         )
 
         # map positions back to model coordinates
-        # FIXME: if we can evaluate objective online, this will not be necessary
+        # NB: if we can evaluate objective online, this will not be necessary
         position_model = vmap(self.model.to_model_params)(states.position)
         # want axes to be (chain, draws, ... <variable dims> ...)
         rearranged_draws = {
@@ -199,16 +201,16 @@ class _Posterior(az.InferenceData):
                 .replace("data: obj", "self:")
             )
             return plot_function
-        else:
-            return super().__getattribute__(name)
+        # not an ArviZ method; use standard attr resolution
+        return super().__getattribute__(name)
 
     def __dir__(self) -> Iterable[str]:
         parent_dir = super().__dir__()
         return parent_dir + _ARVIZ_METHODS
 
 
-class CrossValidation(object):
-    """Cross-validated model
+class CrossValidation:  # pylint: disable=too-many-instance-attributes
+    """Model cross-validated
 
     This class contains draws for all the CV posteriors.
     """
@@ -239,6 +241,7 @@ class CrossValidation(object):
 
     @property
     def model(self) -> "Model":
+        """Model being cross-validated"""
         return self.post.model
 
     def __lt__(self, cv):
@@ -247,7 +250,7 @@ class CrossValidation(object):
     def arviz(self, cv_fold):
         """Retrieves ArviZ :class:`az.InferenceData` object for a CV fold
 
-        Args:
+        Keyword arguments
             cv_fold: index of CV fold corresponding to desired posterior
         """
         chain_folds = jnp.repeat(self.fold_indexes, self.chains)
@@ -268,14 +271,17 @@ class CrossValidation(object):
 
     @property
     def divergences(self):
+        """Divergence count for each chain"""
         return self.accumulator.divergence_count
 
     @property
     def num_divergent_chains(self):
+        """Total number of chains with nonzero divergences"""
         return int(jnp.sum(self.accumulator.divergence_count > 0))
 
     @property
     def acceptance_rates(self):
+        """Acceptance rate for all chains, as fraction of 1"""
         return self.accumulator.accepted_count / self.draws
 
     def __repr__(self) -> str:
@@ -289,11 +295,12 @@ class CrossValidation(object):
                 "",
                 f"    elpd = {self.elpd:.4f} (se {self.elpd_se:.4f})",
                 "",
-                f"Calculated from {self.folds:,} folds ({self.chains:,} chains per fold, "
+                f"Calculated from {self.folds:,} folds "
+                f"({self.chains:,} chains per fold, "
                 f"{self.chains*self.folds:,} total)",
                 "",
-                f"Average acceptance rate {avg_accept*100:.1f}% (min {min_accept*100:.1f}%, "
-                f"max {max_accept*100:.1f}%)",
+                f"Average acceptance rate {avg_accept*100:.1f}% "
+                f"(min {min_accept*100:.1f}%, max {max_accept*100:.1f}%)",
                 "",
                 f"Divergent chain count: {self.num_divergent_chains:,}",
             ]
@@ -301,36 +308,35 @@ class CrossValidation(object):
 
     def block_until_ready(self) -> None:
         """Block the thread until results are back from the GPU."""
-        self.cv_accumulator.divergence_count.block_until_ready()
+        self.accumulator.divergence_count.block_until_ready()
 
     def densities(self, par, combine=False, ncols=4, figsize=(40, 80)):
         """Small-multiple kernel densities for cross-validation posteriors."""
         rows = int(jnp.ceil(self.model.cv_folds() / ncols))
-        fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
-        for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
+        _, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
+        for fold, axis in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
             all_draws = self.states[par][chain_indexes, :]
             if combine:
                 all_draws = jnp.expand_dims(jnp.reshape(all_draws, (-1,)), axis=1)
-            xs = jnp.linspace(jnp.min(all_draws), jnp.max(all_draws), 1_000)
+            x_coords = jnp.linspace(jnp.min(all_draws), jnp.max(all_draws), 1_000)
             for i in range(self.chains):
                 draws = all_draws[i, :]
                 try:
-                    kde = sst.gaussian_kde(draws)
-                    ax.plot(xs, kde(xs))
-                except Exception:
+                    axis.plot(x_coords, sst.gaussian_kde(draws)(x_coords))
+                except np.linalg.LinAlgError:
                     print(f"Error evaluating kde for fold {fold}, chain {i}")
 
     def trace_plots(self, par, ncols=4, figsize=(40, 80)) -> None:
         """Plot trace plots for every single cross validation fold."""
         rows = int(jnp.ceil(self.model.cv_folds() / ncols))
-        fig, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
-        for fold, ax in zip(range(self.model.cv_folds()), axes.ravel()):
+        _, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
+        for fold, axis in zip(range(self.model.cv_folds()), axes.ravel()):
             chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
-            ax.plot(self.states[par][chain_indexes, :].T)
+            axis.plot(self.states[par][chain_indexes, :].T)
 
 
-class Model(object):
+class Model:
     """A Bayesian model. Encapsulates both data and specification.
 
     There are two sets of parameters referenced in this class, both of
@@ -382,7 +388,7 @@ class Model(object):
             params: dict of model parameters in constrained (model)
                     parameter space
         """
-        return 0.0
+        raise NotImplementedError()
 
     def log_cond_pred(self, model_params: ModelParams, cv_fold: CVFold):
         """Computes log conditional predictive ordinate, log p(ỹ|θˢ).
@@ -441,6 +447,7 @@ class Model(object):
         """Generate a dataset corresponding to the specified random key."""
         raise NotImplementedError()
 
+    # pylint: disable=no-self-use
     def to_inference_params(self, model_params: ModelParams) -> InfParams:
         """Convert constrained (model) params to unconstrained (sampler) space
 
@@ -458,7 +465,10 @@ class Model(object):
         return model_params
 
     def to_model_params(self, inf_params: InfParams) -> ModelParams:
-        """Convert unconstrained (inference) params to constrained (model) parameter space
+        """Convert unconstrained to constrained parameters space
+
+        Maps unconstrained (inference) params in `inf_params` to corresponding
+        parameters in constrained (model) parameter space.
 
         Keyword arguments:
             inf_params: dictionary of parameters in unconstrained (sampler) parameter
@@ -470,11 +480,12 @@ class Model(object):
         """
         return inf_params
 
+    # pylint: disable=unused-argument
     def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
         """Return total log determinant of transformation to constrained parameters
 
         Keyword arguments:
-            model_params: dictionary of parameters in constrained (model) parameter space
+            model_params: dic of parameters in constrained (model) parameter space
 
         Returns:
             dictionary of parameters with same structure as model_params
@@ -500,17 +511,17 @@ class Model(object):
             out:            progress indicator
             warmup_results: use this instead of running warmup
         """
-        print = (out or Progress()).print
+        write = (out or Progress()).print
         rng_key = random.PRNGKey(seed)
         warmup_key, inference_key, post_key = random.split(rng_key, 3)
 
-        print("Thor's Cross-Validatory Hammer")
-        print("==============================\n")
+        write("Thor's Cross-Validatory Hammer")
+        write("==============================\n")
 
         if warmup_results:
-            print("Skipping warmup")
+            write("Skipping warmup")
         else:
-            print("Starting Stan warmup using NUTS...")
+            write("Starting Stan warmup using NUTS...")
             timer = Timer()
             warmup_results = warmup(
                 self.cv_potential,
@@ -519,12 +530,12 @@ class Model(object):
                 chains,
                 warmup_key,
             )
-            print(
+            write(
                 f"      {warmup_steps} warmup draws took {timer}"
                 f" ({warmup_steps/timer.sec:.1f} iter/sec)."
             )
 
-        print(
+        write(
             f"Obtaining {draws*chains:,} full-data posterior draws "
             f"({chains} chains, {draws:,} draws per chain)..."
         )
@@ -532,7 +543,7 @@ class Model(object):
         states = full_data_inference(
             self.cv_potential, warmup_results, draws, chains, inference_key
         )
-        print(
+        write(
             f"      {chains*draws:,} HMC draws took {timer}"
             f" ({chains*draws/timer.sec:,.0f} iter/sec)."
         )
@@ -553,5 +564,5 @@ class Model(object):
             draws=draws,
             warmup=warmup_results,
             rng_key=post_key,
-            print=print,
+            print=write,
         )
