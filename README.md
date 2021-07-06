@@ -8,7 +8,7 @@ The project roadmap has been moved to [Github issues](https://github.com/kuperov
 Setting up
 ----------
 
-You'll need python ≥ 3.7. It's probably easiest to use Anaconda but YMMV.
+You'll need python ≥ 3.7. Alex uses CPython 3.8, although it is probably easiest to use Anaconda. YMMV.
 
 On a reasonable OS you should be able to create the virtual environment that contains runtime and development dependencies with:
 
