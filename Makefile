@@ -55,6 +55,10 @@ lint:
 	venv/bin/flake8 ploo test
 	# venv/bin/pylint ploo test
 
+.PHONY: fixtures
+fixtures:
+	venv/bin/python3 scripts/run_test_models.py
+
 config: venv
 	# Configure the development environment, if not already
 	cp --no-clobber -r scripts/vscode .vscode

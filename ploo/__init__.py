@@ -9,6 +9,5 @@ from .compare import compare
 from .cv import LFO, LOO, KFold
 from .hmc import WarmupResults, warmup
 from .model import Model
-from .models import *
 from .transforms import IntervalTransform, LogTransform
 from .util import DummyProgress, Progress
