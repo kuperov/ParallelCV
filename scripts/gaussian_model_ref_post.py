@@ -36,9 +36,10 @@ dat1 = {"Y": np.array(y), "N": len(y)}
 posterior = stan.build(model, data=dat1)
 fit = posterior.sample(num_chains=4, num_samples=1000)
 df = fit.to_frame()
-df.to_csv("test/gaussian_post.csv")
+df.to_csv("test/fixtures/gaussian_post.csv")
 post = az.from_pystan(fit)
 az.summary(post)
+az.to_netcdf(post, 'test/fixtures/gaussian.nc')
 
 rank = az.rhat(post, method="rank")
 split = az.rhat(post, method="split")
