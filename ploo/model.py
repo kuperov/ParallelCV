@@ -430,26 +430,24 @@ class Model:
         """Deterministic starting value, transformed to unconstrained inference space"""
         return self.to_inference_params(self.initial_value())
 
-    def cv_potential(self, inf_params: InfParams, cv_fold: CVFold) -> jnp.DeviceArray:
-        """Potential for the given CV fold.
-
-        We use index=-1 to indicate full-data likelihood (ie no CV folds dropped). If
-        index >= 0, then the potential function should leave out a likelihood
-        contribution identified by the value of cv_fold.
+    def cv_potential(
+        self, inf_params: InfParams, likelihood_mask: jnp.DeviceArray
+    ) -> jnp.DeviceArray:
+        """Potential for a CV fold.
 
         Keyword arguments:
             inf_params: model parameters in inference (unconstrained) space
-            cv_fold:    an integer corresponding to a CV fold
+            lhood_mask: mask to apply to likelihood contributions by elementwise
+                        multiplication
+
+        Returns
+            joint potential of model, adjusted for CV fold
         """
         model_params = self.to_model_params(inf_params)
-        llik = self.log_likelihood(model_params=model_params, cv_fold=cv_fold)
+        llik = self.log_likelihood(model_params=model_params) * likelihood_mask
         lprior = self.log_prior(model_params=model_params)
         ldet = self.log_det(model_params=model_params)
-        return -llik - lprior - ldet
-
-    def cv_folds(self):
-        """Number of cross-validation folds."""
-        raise NotImplementedError()
+        return -jnp.sum(llik) - lprior - ldet
 
     def parameters(self):
         """Names of parameters"""
@@ -530,16 +528,13 @@ class Model:
         rng_key = random.PRNGKey(seed)
         warmup_key, inference_key, post_key = random.split(rng_key, 3)
 
-        write("Thor's Cross-Validatory Hammer")
-        write("==============================\n")
-
         if warmup_results:
             write("Skipping warmup")
         else:
             write("Starting Stan warmup using NUTS...")
             timer = Timer()
             warmup_results = warmup(
-                self.cv_potential,
+                self.potential,
                 self.initial_value(),
                 warmup_steps,
                 chains,
@@ -556,7 +551,7 @@ class Model:
         )
         timer = Timer()
         states = full_data_inference(
-            self.cv_potential, warmup_results, draws, chains, inference_key
+            self.potential, warmup_results, draws, chains, inference_key
         )
         write(
             f"      {chains*draws:,} HMC draws took {timer}"

@@ -39,11 +39,8 @@ class _GaussianVarianceModel(Model):
         self.sigma_sq_transform = LogTransform()
 
     def log_likelihood(self, model_params: ModelParams, cv_fold):
-        return jnp.sum(
-            st.norm.logpdf(
-                self.y, loc=self.mean, scale=jnp.sqrt(model_params["sigma_sq"])
-            )
-        )
+        sigma = jnp.sqrt(model_params["sigma_sq"])
+        return st.norm.logpdf(self.y, loc=self.mean, scale=sigma)
 
     def log_prior(self, model_params: ModelParams):
         return st.gamma.logpdf(

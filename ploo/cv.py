@@ -77,6 +77,23 @@ class CrossValidationScheme(Iterable):
         return np.stack(arrays)
 
 
+class NullCrossValidationScheme(CrossValidationScheme):
+    """Dummy CV scheme for the full-data posterior.
+
+    There's only one fold, corresponding to a mask matrix that is all ones.
+    """
+
+    def __init__(self, shape: Tuple) -> None:
+        self.shape = shape
+        super().__init__("Full-data posterior")
+
+    def __iter__(self) -> Iterator[CVFold]:
+        yield 0  # there's only one "fold", the full-data posterior
+
+    def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
+        return jnp.ones(shape=self.shape)
+
+
 class LOO(CrossValidationScheme):
     """Leave-one-out cross validation.
 
@@ -118,7 +135,8 @@ class LFO(CrossValidationScheme):
     def __init__(self, shape, margin: int) -> None:
         """Create a new leave-future-out (LFO) CrossValidation.
 
-        This currently only works with one-dimensional datasets.
+        This currently only works with one-dimensional dependence structures
+        (like univariate time series).
 
         Keyword args:
             shape:  length of 1D likelihood contribution array
@@ -138,9 +156,6 @@ class LFO(CrossValidationScheme):
         return [fold]
 
     def __iter__(self) -> Iterator[CVFold]:
-        # Fold indexes still start at zero, but don't correspond to
-        # the missing contribution. We could have gone either way here
-        # but this approach helps check we aren't breaking the ADT elsewhere
         return iter(range(self.margin, self.shape[0]))
 
 

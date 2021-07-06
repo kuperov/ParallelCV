@@ -448,7 +448,6 @@ def cv_hmc_proposal(
     Returns
     -------
     A kernel that generates a new chain state and information about the transition.
-
     """
 
     def build_trajectory(
