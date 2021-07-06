@@ -51,6 +51,10 @@ class _Posterior(az.InferenceData):
                     (chain, draw, variable_axis0, ...)
         cv_draws:   cross-validation draws
         seed:       seed used when invoking inference
+        chains:     number of chains per CV posterior
+        warmup_res: results from warmup
+        rng_key:    random number generator state
+        write:      function for writing output to the console
     """
 
     def __init__(
@@ -60,18 +64,18 @@ class _Posterior(az.InferenceData):
         seed: int,
         chains: int,
         draws: int,
-        warmup: WarmupResults,
+        warmup_res: WarmupResults,
         rng_key: jnp.DeviceArray,
-        print: Callable,
+        write: Callable,
     ) -> None:
         self.model = model
         self.post_draws = post_draws
         self.seed = seed
         self.chains = chains
         self.draws = draws
-        self.warmup = warmup
+        self.warmup_res = warmup_res
         self.rng_key = rng_key
-        self.print = print
+        self.write = write
         # construct xarrays for ArviZ
         # FIXME: this incorrectly assumes univariate parameters
         posterior = xr.Dataset(
@@ -141,7 +145,7 @@ class _Posterior(az.InferenceData):
         draws = int(draws or self.draws)
         timer = Timer()
         cv_chains = self.chains * self.model.cv_folds()
-        self.print(
+        self.write(
             f"Cross-validation with {self.model.cv_folds():,} folds "
             f"using {cv_chains:,} chains..."
         )
@@ -153,13 +157,13 @@ class _Posterior(az.InferenceData):
         accumulator, states = cross_validate(
             self.model.cv_potential,
             log_cond_pred,
-            self.warmup,
+            self.warmup_res,
             self.model.cv_folds(),
             draws,
             chains,
             rng_key,
         )
-        self.print(
+        self.write(
             f"      {cv_chains*draws:,} HMC draws took {timer}"
             f" ({cv_chains*draws/timer.sec:,.0f} iter/sec)."
         )
@@ -218,15 +222,26 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
     def __init__(
         self,
         post: _Posterior,
-        cv_accumulator: CrossValidationState,
+        accumulator: CrossValidationState,
         states: Dict[str, jnp.DeviceArray],
         draws: int,
         chains: int,
         folds: int,
         fold_indexes: jnp.DeviceArray,
     ) -> None:
+        """Create a new CrossValidation instance
+
+        Keyword arguments:
+            post:         full-data posterior
+            accumulator:  state accumulator used during inference step
+            states:       MCMC states, as dict keyed by parameter
+            draws:        number of MCMC draws
+            chains:       number of independent MCMC chains
+            folds:        number of cross-validation folds
+            fold_indexes: indexes of cross-validation folds
+        """
         self.post = post
-        self.accumulator = cv_accumulator
+        self.accumulator = accumulator
         self.states = states
         self.draws = int(draws)
         self.chains = chains
@@ -562,7 +577,7 @@ class Model:
             seed=seed,
             chains=chains,
             draws=draws,
-            warmup=warmup_results,
+            warmup_res=warmup_results,
             rng_key=post_key,
-            print=write,
+            write=write,
         )
