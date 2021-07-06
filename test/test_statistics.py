@@ -13,14 +13,19 @@ from ploo.statistics import ess, split_rhat
 
 
 class TestStatistics(TestCase):
+    """Check diagnostic statistics"""
+
     def setUp(self) -> None:
         self.gaussian_post = az.from_netcdf(fixture("gaussian.nc"))
+        # pylint: disable=no-member
         self.mu = jnp.array(self.gaussian_post.posterior.mu)
         self.sigma = jnp.array(self.gaussian_post.posterior.sigma)
 
-    def test_split_Rhat(self):
-        # ordinary Gelman et al (2013) split Rhat
-        # compare to 6dp because we're using 32 bit arithmetic
+    def test_split_rhat(self):
+        """Ordinary Gelman et al (2013) split Rhat
+
+        Compare to 6dp because we're using 32 bit arithmetic
+        """
         split = az.rhat(self.gaussian_post, method="split")
         sr_mu = split_rhat(self.mu)
         self.assertAlmostEqual(float(sr_mu), float(split["mu"]), places=6)
@@ -28,9 +33,11 @@ class TestStatistics(TestCase):
         self.assertAlmostEqual(float(sr_sigma), float(split["sigma"]), places=6)
 
     def test_ess(self):
-        # ess as described in Vehtari et al 2021, Geyer 2011
-        # compare to within 10% because we're using a slightly
-        # different, and a somewhat sketchy, algorithm
+        """ess as described in Vehtari et al 2021, Geyer 2011
+
+        Compare to within 10% because we're using a slightly different, and
+        somewhat sketchy, algorithm
+        """
         azess = az.ess(self.gaussian_post, method="mean")
         sr_mu = ess(self.mu)
         self.assertClose(float(sr_mu), float(azess["mu"]), rtol=0.1)

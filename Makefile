@@ -50,8 +50,10 @@ pretty:
 	venv/bin/black ploo test
 
 lint:
+	# check code formatting (fix with "make pretty")
 	venv/bin/black --check ploo test
 	venv/bin/isort --profile black --check-only ploo test
+	# check for obvious bugs or code standard violations
 	venv/bin/flake8 ploo test
 	# venv/bin/pylint ploo test
 

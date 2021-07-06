@@ -11,6 +11,7 @@ default-docstring-type = numpy
 
 [FORMAT]
 max-line-length = 88
+good-names = N,X,Y,i,j,t,k,x,y,mu,rho
 
 [MESSAGES CONTROL]
 disable = C0330, C0326, C0199, C0411

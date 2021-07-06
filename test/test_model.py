@@ -155,7 +155,7 @@ class TestComparisons(unittest.TestCase):
         for m in ["LOO", "model0", "bad_model", "awful_model"]:
             self.assertIn(m, repr(cmp_res))
         self.assertIs(cmp_res[0], cv_1)
-        self.assertIs(cmp_res['model0'], cv_1)
+        self.assertIs(cmp_res["model0"], cv_1)
 
 
 if __name__ == "__main__":
