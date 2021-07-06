@@ -125,7 +125,10 @@ class TestComparisons(unittest.TestCase):
     """Does model selection via cross-validation work?"""
 
     def test_compare_elpd(self):
-        """Check cross-validation for one posterior, and model selection"""
+        """Check cross-validation for one posterior, and model selection
+
+        All in one big test so we only have to run one set of cross-validations
+        """
         gen_key = jax.random.PRNGKey(seed=42)
         y = _GaussianVarianceModel.generate(N=50, mean=0, sigma_sq=10, rng_key=gen_key)
         model_1 = _GaussianVarianceModel(y, mean=0.0)  # good
@@ -151,6 +154,8 @@ class TestComparisons(unittest.TestCase):
         self.assertEqual(cmp_res.names(), ["model0", "bad_model", "awful_model"])
         for m in ["LOO", "model0", "bad_model", "awful_model"]:
             self.assertIn(m, repr(cmp_res))
+        self.assertIs(cmp_res[0], cv_1)
+        self.assertIs(cmp_res['model0'], cv_1)
 
 
 if __name__ == "__main__":

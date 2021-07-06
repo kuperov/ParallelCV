@@ -19,10 +19,10 @@ class ModelComparison:
         self.ordered_cvs = ordered_cvs
         self.cv_type = cv_type
 
-    def __getitem(self, key):
+    def __getitem__(self, key):
         if isinstance(key, str):
             return dict(self.ordered_cvs)[key]
-        return self.ordered_cvs[key]
+        return self.ordered_cvs[key][1]
 
     def __repr__(self) -> str:
         title = f"{self.cv_type} Cross Validation Comparison"
