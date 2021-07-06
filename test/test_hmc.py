@@ -9,8 +9,8 @@ from jax import numpy as jnp
 from jax import random
 from jax.interpreters.xla import DeviceArray
 
-from ploo import GaussianModel, WarmupResults
-from ploo.hmc import cross_validate, full_data_inference, warmup
+from ploo.hmc import WarmupResults, cross_validate, full_data_inference, warmup
+from ploo.models import GaussianModel
 
 
 class TestInference(unittest.TestCase):
@@ -51,7 +51,7 @@ class TestInference(unittest.TestCase):
         accumulator, states = cross_validate(
             cv_potential=self.gauss.cv_potential,
             cv_cond_pred=self.gauss.log_cond_pred,
-            warmup=self.wu,
+            warmup_res=self.wu,
             cv_folds=self.gauss.cv_folds(),
             draws=1e3,
             chains=2,

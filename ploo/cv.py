@@ -77,23 +77,6 @@ class CrossValidationScheme(Iterable):
         return np.stack(arrays)
 
 
-class NullCrossValidationScheme(CrossValidationScheme):
-    """Dummy CV scheme for the full-data posterior.
-
-    There's only one fold, corresponding to a mask matrix that is all ones.
-    """
-
-    def __init__(self, shape: Tuple) -> None:
-        self.shape = shape
-        super().__init__("Full-data posterior")
-
-    def __iter__(self) -> Iterator[CVFold]:
-        yield 0  # there's only one "fold", the full-data posterior
-
-    def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
-        return jnp.ones(shape=self.shape)
-
-
 class LOO(CrossValidationScheme):
     """Leave-one-out cross validation.
 

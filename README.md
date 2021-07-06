@@ -27,6 +27,8 @@ Before commiting code, run the code formatter and linter (the pre-commit hook sh
     make pretty
     make lint
 
+If you don't already have a python development environment you prefer, VSCode is free and has a shallow learning curve.
+
 Example
 -------
 

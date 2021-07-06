@@ -2,6 +2,34 @@
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
+
+Design information
+------------------
+
+Class diagram::
+
+    ┌──────────┐     ┌──────────────────────┐     ┌───────────────────────┐
+    │ CVKernel │     │  CrossValidatedModel │     │ CrossValidationScheme │
+    │          │     │                      │     │                       │
+    │          │has-a│  * potential         │has-a│ * __iter__            │
+    │          ├─────►                      ├─────►                       │
+    │          │     │  * num_folds         │     │ * mask_for            │
+    └──────────┘     │                      │     │                       │
+                     │  * initial_param     │     │ * coordinates_for     │
+                     │                      │     │                       │
+                     └───────────────┬──────┘     └───────────────────────┘
+                                has-a│
+                     ┌───────────────▼──────┐
+                     │  Model               │
+                     │                      │
+                     │  * log_likelihood    │
+                     │                      │
+                     │  * log_prior         │
+                     │                      │
+                     │  * initial_param     │
+                     │                      │
+                     └──────────────────────┘
+
 """
 
 # flake8: noqa
