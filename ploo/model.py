@@ -17,6 +17,7 @@ from jax import random, vmap
 from scipy import stats as sst
 from tabulate import tabulate
 
+from .cv import CrossValidationScheme, cv_factory
 from .hmc import (
     CrossValidationState,
     InfParams,
@@ -131,41 +132,56 @@ class _Posterior(az.InferenceData):
         return tabulate(table_rows, headers=table_headers)
 
     def cross_validate(
-        self, draws: int = None, chains: int = None, rng_key: jnp.DeviceArray = None
-    ):
+        self,
+        cv_type: Union[str, CrossValidationScheme] = "LOO",
+        rng_key: jnp.DeviceArray = None,
+        **kwargs,
+    ) -> "CrossValidation":
         """Run cross-validation for this posterior.
 
+        Number of chains and draws per chain are the same as the original inference
+        procedure.
+
         Keyword arguments:
-            draws:   number of draws per chain
-            chains:  number of chains per CV posterior
-            rng_key: random generator state
+            cv_scheme: name of cross-validation scheme to apply
+            rng_key:   random generator state
+            kwargs:    arguments to pass to cross-validation scheme constructor
+
+        Returns:
+            CrossValidation object containing all CV posteriors
         """
-        chains = chains or self.chains
         rng_key = rng_key or self.rng_key
-        draws = int(draws or self.draws)
         timer = Timer()
-        cv_chains = self.chains * self.model.cv_folds()
+        # shape from a likelihood evaluation: wasteful but prevents mistakes
+        cv_shape = self.model.log_likelihood(self.model.initial_value()).shape
+        cv_scheme = cv_factory(cv_type)(shape=cv_shape, **kwargs)
+        cv_chains = self.chains * cv_scheme.cv_folds()
         self.write(
-            f"Cross-validation with {self.model.cv_folds():,} folds "
+            f"Cross-validation with {cv_scheme.cv_folds():,} folds "
             f"using {cv_chains:,} chains..."
         )
+        masks = cv_scheme.mask_array()
+        pred_indexes = cv_scheme.pred_index_array()
 
-        def log_cond_pred(inf_params: InfParams, cv_fold: CVFold) -> jnp.DeviceArray:
+        def potential(inf_params: InfParams, cv_fold: int) -> jnp.DeviceArray:
+            return self.model.cv_potential(inf_params, masks[cv_fold])
+
+        def log_cond_pred(inf_params: InfParams, cv_fold: int) -> jnp.DeviceArray:
             model_params = self.model.to_model_params(inf_params)
-            return self.model.log_cond_pred(model_params, cv_fold)
+            return self.model.log_cond_pred(model_params, pred_indexes[cv_fold])
 
         accumulator, states = cross_validate(
-            self.model.cv_potential,
+            potential,
             log_cond_pred,
             self.warmup_res,
-            self.model.cv_folds(),
-            draws,
-            chains,
+            cv_scheme.cv_folds(),
+            self.draws,
+            self.chains,
             rng_key,
         )
         self.write(
-            f"      {cv_chains*draws:,} HMC draws took {timer}"
-            f" ({cv_chains*draws/timer.sec:,.0f} iter/sec)."
+            f"      {cv_chains*self.draws:,} HMC draws took {timer}"
+            f" ({cv_chains*self.draws/timer.sec:,.0f} iter/sec)."
         )
 
         # map positions back to model coordinates
@@ -177,15 +193,7 @@ class _Posterior(az.InferenceData):
             for (var, draws) in position_model.items()
         }
 
-        return CrossValidation(
-            self,
-            accumulator,
-            rearranged_draws,
-            draws=draws,
-            chains=chains,
-            folds=self.model.cv_folds(),
-            fold_indexes=jnp.arange(self.model.cv_folds()),
-        )
+        return CrossValidation(self, accumulator, rearranged_draws, scheme=cv_scheme)
 
     def __getattribute__(self, name: str) -> Any:
         """If the user invokes a plot_* function, delegate to ArviZ."""
@@ -224,10 +232,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         post: _Posterior,
         accumulator: CrossValidationState,
         states: Dict[str, jnp.DeviceArray],
-        draws: int,
-        chains: int,
-        folds: int,
-        fold_indexes: jnp.DeviceArray,
+        scheme: CrossValidationScheme,
     ) -> None:
         """Create a new CrossValidation instance
 
@@ -235,29 +240,31 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
             post:         full-data posterior
             accumulator:  state accumulator used during inference step
             states:       MCMC states, as dict keyed by parameter
-            draws:        number of MCMC draws
-            chains:       number of independent MCMC chains
             folds:        number of cross-validation folds
             fold_indexes: indexes of cross-validation folds
         """
         self.post = post
         self.accumulator = accumulator
         self.states = states
-        self.draws = int(draws)
-        self.chains = chains
-        self.folds = folds
+        self.scheme = scheme
         self.elpd = float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
         self.elpd_se = float(
             jnp.std(self.accumulator.sum_log_pred_dens / self.draws)
             / jnp.sqrt(self.draws)
         )
-        self.fold_indexes = fold_indexes
-        self.cv_type = "LOO"
 
     @property
     def model(self) -> "Model":
         """Model being cross-validated"""
         return self.post.model
+
+    @property
+    def draws(self) -> int:
+        return self.post.draws
+
+    @property
+    def chains(self) -> int:
+        return self.post.chains
 
     def __lt__(self, cv):
         return self.elpd.__gt__(cv.elpd)  # note change of sign, want largest first
@@ -268,7 +275,8 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         Keyword arguments
             cv_fold: index of CV fold corresponding to desired posterior
         """
-        chain_folds = jnp.repeat(self.fold_indexes, self.chains)
+        fold_indexes = jnp.arange(self.scheme.cv_folds())
+        chain_folds = jnp.repeat(fold_indexes, self.chains)
         chain_i = chain_folds == cv_fold
         if not jnp.sum(chain_i):
             raise Exception("No chains match CV fold {self.cv_fold}")
@@ -370,9 +378,7 @@ class Model:
 
     name = "Unnamed model"
 
-    def log_likelihood(
-        self, model_params: ModelParams, cv_fold: CVFold = -1
-    ) -> jnp.DeviceArray:
+    def log_likelihood(self, model_params: ModelParams) -> jnp.DeviceArray:
         """Log likelihood
 
         JAX needs to be able to trace this function.
@@ -387,14 +393,13 @@ class Model:
         Keyword args:
             params:  dict of model parameters, in constrained (model)
                      parameter space
-            cv_fold: cross-validation fold to evaluate
 
         Returns:
             log likelihood at the given parameters for the given CV fold
         """
         raise NotImplementedError()
 
-    def log_prior(self, model_params: ModelParams):
+    def log_prior(self, model_params: ModelParams) -> jnp.DeviceArray:
         """Compute log prior log p(θ)
 
         JAX needs to be able to trace this function.
@@ -405,7 +410,9 @@ class Model:
         """
         raise NotImplementedError()
 
-    def log_cond_pred(self, model_params: ModelParams, cv_fold: CVFold):
+    def log_cond_pred(
+        self, model_params: ModelParams, coords: jnp.DeviceArray
+    ) -> jnp.DeviceArray:
         """Computes log conditional predictive ordinate, log p(ỹ|θˢ).
 
         FIXME: needs some kind of index to identify the conditioning values
@@ -413,17 +420,14 @@ class Model:
         Keyword arguments:
             params:  a dict of parameters (constrained (model) parameter
                      space) that potentially contains vectors
-            cv_fold: index of point at which to evaluate predictive density
+            coords:  points at which to evaluate predictive density, expressed
+                     as coordinates that correspond to the shape of the log
+                     likelihood contributions
         """
         raise NotImplementedError()
 
     def initial_value(self) -> ModelParams:
-        """A deterministic starting value in model parameter space.
-
-        FIXME: Deal with multiple independent chains.
-               Make this a function of the chain number?
-               Supply vectors of starting positions?
-        """
+        """A deterministic starting value in model parameter space."""
         raise NotImplementedError()
 
     def initial_value_unconstrained(self) -> InfParams:
@@ -445,6 +449,22 @@ class Model:
         """
         model_params = self.to_model_params(inf_params)
         llik = self.log_likelihood(model_params=model_params) * likelihood_mask
+        lprior = self.log_prior(model_params=model_params)
+        ldet = self.log_det(model_params=model_params)
+        return -jnp.sum(llik) - lprior - ldet
+
+    def potential(self, inf_params: InfParams, cv_fold: int = -1) -> jnp.DeviceArray:
+        """Potential for a CV fold.
+
+        Keyword arguments:
+            inf_params: model parameters in inference (unconstrained) space
+            cv_fold:    NOT USED - dummy parameter so we can reuse HMC routines
+
+        Returns
+            joint potential of model, adjusted for CV fold
+        """
+        model_params = self.to_model_params(inf_params)
+        llik = self.log_likelihood(model_params=model_params)
         lprior = self.log_prior(model_params=model_params)
         ldet = self.log_det(model_params=model_params)
         return -jnp.sum(llik) - lprior - ldet

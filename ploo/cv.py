@@ -6,7 +6,7 @@ Alex Cooper <alex@acooper.org>
 This module compares models using cross-validation output
 """
 
-from typing import Iterable, Iterator, Sequence, Tuple, Union
+from typing import Callable, Iterable, Iterator, Sequence, Tuple, Union
 
 import numpy as np
 from jax import numpy as jnp
@@ -64,17 +64,50 @@ class CrossValidationScheme(Iterable):
         """
         raise NotImplementedError()
 
-    def summary_array(self) -> jnp.DeviceArray:
-        """Generate summary matrix for 1D CV schemes.
+    def cv_folds(self) -> int:
+        """Number of CV folds in this scheme."""
+        raise NotImplementedError()
 
-        Basically stacks masks on top of each other, row by row.
-        For 1D data, output is a 2D array, etc.
+    def pred_index_array(self) -> jnp.DeviceArray:
+        """Generate array of prediction indexes
+
+        The resulting array has one more dimension than the dependence structure,
+        with axis 0 as the fold.
+        """
+        return jnp.stack([np.atleast_1d(fold_coord) for fold_coord in self])
+
+    def mask_array(self) -> jnp.DeviceArray:
+        """Generate array of likelihood contribution masks
+
+        Basically stacks masks on top of each other, row by row. For 1D data, output
+        is a 2D array, etc.
 
         Returns
             jnp.DeviceArray
         """
-        arrays = [self.mask_for(fold) for fold in self]
-        return np.stack(arrays)
+        return jnp.stack([self.mask_for(fold) for fold in self])
+
+    def summary_array(self) -> np.ndarray:
+        """Array for visualizing this CV scheme.
+
+        Interpretation:
+          * deleted = 0.0
+          * training set = 1.0
+          * test set = 2.0
+
+        Can plot this in a notebook with `matplotlib.pyplot.matshow()`
+
+        NB: this is really only useful for 1D schemes, where the output is 2D.
+        """
+
+        def array_for_fold(fold_i):
+            # use numpy not JAX arrays because numpy arrays are mutable
+            mask = np.array(self.mask_for(fold_i))
+            for pred_i in self.coordinates_for(fold_i):
+                mask[pred_i] = 2.0
+            return mask
+
+        return np.stack([array_for_fold(i) for i in range(self.cv_folds())])
 
 
 class LOO(CrossValidationScheme):
@@ -99,6 +132,9 @@ class LOO(CrossValidationScheme):
 
     def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
         return [fold]
+
+    def cv_folds(self) -> int:
+        return np.prod(self.shape)
 
     def __iter__(self) -> Iterator[CVFold]:
         if len(self.shape) == 1:
@@ -137,6 +173,9 @@ class LFO(CrossValidationScheme):
 
     def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
         return [fold]
+
+    def cv_folds(self) -> int:
+        return self.shape[0] - self.margin
 
     def __iter__(self) -> Iterator[CVFold]:
         return iter(range(self.margin, self.shape[0]))
@@ -183,3 +222,12 @@ class KFold(CrossValidationScheme):
 
     def coordinates_for(self, fold: CVFold) -> Iterable[Coordinate]:
         return self.coords[fold]
+
+    def cv_folds(self) -> int:
+        return self.k
+
+
+def cv_factory(name: str) -> Callable:
+    """Returns constructor for CV scheme identified by name"""
+    cls = {"LOO": LOO, "LFO": LFO, "KFold": KFold}[name]
+    return cls

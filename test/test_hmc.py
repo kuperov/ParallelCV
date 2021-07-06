@@ -31,7 +31,7 @@ class TestInference(unittest.TestCase):
 
     def test_warmup(self):
         initial = self.gauss.to_inference_params(self.gauss.initial_value())
-        wu = warmup(self.gauss.cv_potential, initial, 600, 8, self.rng_key)
+        wu = warmup(self.gauss.potential, initial, 600, 8, self.rng_key)
         self.assertIsInstance(wu, WarmupResults)
         self.assertEqual(wu.int_steps, 3)
         self.assertIsInstance(wu.starting_values, dict)

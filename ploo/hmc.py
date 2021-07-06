@@ -118,7 +118,7 @@ class WarmupResults(NamedTuple):
 
 # pylint: disable=too-many-locals
 def warmup(
-    cv_potential: Callable,
+    potential: Callable,
     initial_value: InfParams,
     warmup_steps,
     num_start_pos,
@@ -144,11 +144,9 @@ def warmup(
         WarmupResults object containing step size, mass matrix, initial positions,
         and integration steps.
     """
-    assert jnp.isfinite(cv_potential(initial_value, -1)), "Invalid initial value"
+    # pass cv_fold = -1 even though should not be necessary
+    assert jnp.isfinite(potential(initial_value, -1)), "Invalid initial value"
     warmup_key, start_val_key = random.split(rng_key)
-
-    def potential(param):
-        return cv_potential(param, cv_fold=-1)  # full-data potential
 
     def kernel_factory(step_size, inverse_mass_matrix):
         return nuts.kernel(potential, step_size, inverse_mass_matrix)
@@ -469,7 +467,7 @@ def cv_hmc_proposal(
 
     Returns
     -------
-    A kernel that generates a new chain state and information about the transition.
+        A kernel that generates a new chain state and information about the transition.
     """
 
     def build_trajectory(

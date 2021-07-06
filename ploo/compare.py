@@ -60,7 +60,7 @@ def compare(*args: List[CrossValidation], **kwargs: Dict[str, CrossValidation]):
         raise Exception(f'Model names must be unique: {", ".join(dupes)}')
     arg_models.update(kwarg_models)
     ordering = sorted(arg_models.items(), key=lambda m1: m1[1])
-    cv_types = [cv.cv_type for (_, cv) in ordering]
+    cv_types = [cv.scheme.name for (_, cv) in ordering]
     if any(cv_types[0] != t for t in cv_types):
         raise Exception(f'CV types must be the same. Got: {", ".join(cv_types)}.')
     return ModelComparison(ordering, cv_type=cv_types[0])

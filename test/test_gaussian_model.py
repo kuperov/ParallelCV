@@ -12,8 +12,9 @@ import pandas
 from jax import numpy as jnp
 from scipy import stats as st
 
-from ploo import DummyProgress, GaussianModel
+from ploo import DummyProgress
 from ploo.model import _Posterior
+from ploo.models import GaussianModel
 
 
 class TestGaussian(unittest.TestCase):
