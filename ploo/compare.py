@@ -1,20 +1,33 @@
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+
+This module compares models using cross-validation output
+"""
 from typing import Dict, List, Tuple
-from .model import CrossValidation
+
 from tabulate import tabulate
 
+from .model import CrossValidation
 
-class ModelComparison(object):
+
+class _ModelComparison:
+    """Captures a CV ordering between models
+
+    Users should never instantiate this class; use `compare` instead.
+    """
+
     def __init__(
         self, ordered_cvs: List[Tuple[str, CrossValidation]], cv_type: str
     ) -> None:
         self.ordered_cvs = ordered_cvs
         self.cv_type = cv_type
 
-    def __getitem(self, key):
+    def __getitem__(self, key):
         if isinstance(key, str):
             return dict(self.ordered_cvs)[key]
-        else:
-            return self.ordered_cvs[key]
+        return self.ordered_cvs[key][1]
 
     def __repr__(self) -> str:
         title = f"{self.cv_type} Cross Validation Comparison"
@@ -31,7 +44,12 @@ class ModelComparison(object):
         ]
         return "\n".join(output)
 
-    def names(self):
+    def names(self) -> List[str]:
+        """Names of cross-validated models
+
+        Returns
+            list of names
+        """
         return [n for n, _ in self.ordered_cvs]
 
 
@@ -52,7 +70,7 @@ def compare(*args: List[CrossValidation], **kwargs: Dict[str, CrossValidation]):
         raise Exception(f'Model names must be unique: {", ".join(dupes)}')
     arg_models.update(kwarg_models)
     ordering = sorted(arg_models.items(), key=lambda m1: m1[1])
-    cv_types = [cv.cv_type for (_, cv) in ordering]
+    cv_types = [cv.scheme.name for (_, cv) in ordering]
     if any(cv_types[0] != t for t in cv_types):
         raise Exception(f'CV types must be the same. Got: {", ".join(cv_types)}.')
-    return ModelComparison(ordering, cv_type=cv_types[0])
+    return _ModelComparison(ordering, cv_type=cv_types[0])

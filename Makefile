@@ -9,8 +9,8 @@ The following targets are available:
   nb     start a jupyter notebook
   test   run unit tests
   venv   create the virtual environment in venv/
-  black  format code using the black package
-  lint   run code linter
+  pretty format code
+  lint   run code linters
   config first-time environment setup
   clean  remove generated files
 
@@ -41,20 +41,25 @@ venv:
 	rm -rf venv
 	python3 -m virtualenv --python=python3 venv
 	venv/bin/pip3 install --upgrade pip
-	venv/bin/pip3 install -r requirements.txt
-	venv/bin/pip3 install -r requirements-dev.txt
+	venv/bin/pip3 install -r requirements/requirements.txt
+	venv/bin/pip3 install -r requirements/requirements-dev.txt
 	venv/bin/python3 setup.py develop
 
-notebook_keypair.ignore/notebook_keypair.rsa:
-	ssh-keygen -f `pwd`/notebook_keypair.nogit/notebook_keypair.rsa -t rsa -N ''
-
-black:
-	# format code
+pretty:
+	venv/bin/isort --profile black ploo test
 	venv/bin/black ploo test
 
 lint:
+	# check code formatting (fix with "make pretty")
 	venv/bin/black --check ploo test
+	venv/bin/isort --profile black --check-only ploo test
+	# check for obvious bugs or code standard violations
 	venv/bin/flake8 ploo test
+	# venv/bin/pylint ploo test
+
+.PHONY: fixtures
+fixtures:
+	venv/bin/python3 scripts/run_test_models.py
 
 config: venv
 	# Configure the development environment, if not already

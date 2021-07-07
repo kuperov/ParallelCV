@@ -1,7 +1,12 @@
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+"""
 import time
 
 
-class Timer(object):
+class Timer:
     """Timer for measuring and reporting performance."""
 
     def __init__(self) -> None:
@@ -15,7 +20,7 @@ class Timer(object):
         return f"{self.sec:1.01f} sec"
 
 
-class Progress(object):
+class Progress:
     """Prints messages to console as needed."""
 
     def print(self, msg):

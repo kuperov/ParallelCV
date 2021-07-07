@@ -1,0 +1,10 @@
+ipython
+isort
+jupyterlab
+matplotlib
+black
+pandas
+pylint
+pystan
+flake8
+flake8-bugbear

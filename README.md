@@ -8,7 +8,7 @@ The project roadmap has been moved to [Github issues](https://github.com/kuperov
 Setting up
 ----------
 
-You'll need python ≥ 3.7. It's probably easiest to use Anaconda but YMMV.
+You'll need python ≥ 3.7. Alex uses CPython 3.8, although it is probably easiest to use Anaconda. YMMV.
 
 On a reasonable OS you should be able to create the virtual environment that contains runtime and development dependencies with:
 
@@ -16,7 +16,7 @@ On a reasonable OS you should be able to create the virtual environment that con
     cd ploo
     make config
 
-This will add a pre-commit git hook that runs the linter. If you must use Windows, the makefiles probably won't work for you.
+This will add a pre-commit git hook that runs the linter. The Makefile probably won't work on Windows without WSL.
 
 Check everything is working by running the unit tests:
 
@@ -24,8 +24,10 @@ Check everything is working by running the unit tests:
 
 Before commiting code, run the code formatter and linter (the pre-commit hook should lint automatically):
 
-    make black
+    make pretty
     make lint
+
+If you don't already have a python development environment you prefer, VSCode is free and has a shallow learning curve.
 
 Example
 -------

@@ -1,8 +1,13 @@
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+"""
 import unittest
 
 from jax import numpy as jnp
-from scipy.integrate import quad
 from scipy import stats as st
+from scipy.integrate import quad
 
 from ploo.transforms import LogTransform
 

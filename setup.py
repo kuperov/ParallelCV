@@ -1,3 +1,8 @@
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+"""
 from codecs import open
 from os import path
 from setuptools import setup, find_packages
@@ -25,6 +30,6 @@ setup(
         "Programming Language :: Python :: 3.7",
     ],
     packages=find_packages(exclude=["test"]),
-    install_requires=["jax", "blackjax", "tabulate"],
+    install_requires=["arviz", "blackjax", "jax", "jaxlib", "matplotlib", "tabulate"],
     include_package_data=True,
 )

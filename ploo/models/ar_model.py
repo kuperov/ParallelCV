@@ -1,6 +1,14 @@
-from jax import random, numpy as jnp, jit
-import jax.scipy.stats as st
+"""ploo is a package for parallel cross-validation
+
+Confidential code not for distribution.
+Alex Cooper <alex@acooper.org>
+"""
 from functools import partial
+
+import jax.scipy.stats as st
+from jax import jit
+from jax import numpy as jnp
+from jax import random
 
 import ploo
 
