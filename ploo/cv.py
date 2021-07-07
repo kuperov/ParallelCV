@@ -38,7 +38,7 @@ class CrossValidationScheme(Iterable):
     def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
         """Array to multiply elementwise with likelihood contributions
 
-        Keyword arguments:
+        Args:
             fold: a cross-validation fold
 
         Returns:
@@ -54,7 +54,7 @@ class CrossValidationScheme(Iterable):
 
         The coordinates refer to the shape of the likelihood contribution array.
 
-        Keyword arguments:
+        Args:
             fold: integer fold identifier
 
         Returns:
@@ -117,7 +117,7 @@ class LOO(CrossValidationScheme):
     def __init__(self, shape) -> None:
         """Create a new LOO CrossValidation.
 
-        Keyword args:
+        Args:
             shape: numpy shape of likelihood contribution array
         """
         self.shape = shape if isinstance(shape, Sequence) else (shape,)
@@ -155,7 +155,7 @@ class LFO(CrossValidationScheme):
         This currently only works with one-dimensional dependence structures
         (like univariate time series).
 
-        Keyword args:
+        Args:
             shape:  length of 1D likelihood contribution array
             margin: number of observations to always include at start of sequence
         """

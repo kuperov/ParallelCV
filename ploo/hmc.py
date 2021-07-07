@@ -131,7 +131,7 @@ def warmup(
     replace it with a shiny new warmup scheme that will surely never have any
     problems ever.
 
-    Keyword args:
+    Args:
         cv_potential:  potential function, takes model parameter and cross-validation
                        fold
         initial_value: an initial value, expressed in inference (unconstrained)
@@ -192,7 +192,7 @@ def full_data_inference(
 ) -> CVHMCState:
     """Full-data inference on model (i.e. no CV folds dropped)
 
-    Keyword args:
+    Args:
         model:      model to perform inference on
         warmup_res: results from warmup procedure
         draws:      number of posterior draws per chain
@@ -219,6 +219,7 @@ def full_data_inference(
     return states
 
 
+# pylint: disable=too-many-arguments
 def cross_validate(
     cv_potential: Callable,
     cv_cond_pred: Callable,
@@ -236,7 +237,7 @@ def cross_validate(
     the inference loop with something that calculates the objective functions
     (and diagnostics) we want using online estimators.
 
-    Keyword args:
+    Args:
         cv_potential: cross-validation model potential, function of
                       (inference parameters, cv_fold)
         cv_cond_pred: cross-validation conditional predictive density, function of
@@ -357,34 +358,6 @@ def cv_velocity_verlet(
     return one_step
 
 
-def cv_hmc(
-    momentum_generator: Callable,
-    proposal_generator: Callable,
-) -> Callable:
-    def kernel(
-        rng_key: jnp.ndarray, state: CVHMCState
-    ) -> Tuple[CVHMCState, NamedTuple]:
-        key_momentum, key_integrator = jax.random.split(rng_key, 2)
-
-        position, potential_energy, potential_energy_grad, cv_fold = state
-        momentum = momentum_generator(key_momentum, position)
-
-        augmented_state = IntegratorState(
-            position, momentum, potential_energy, potential_energy_grad
-        )
-        proposal, info = proposal_generator(key_integrator, augmented_state, cv_fold)
-        proposal = CVHMCState(
-            proposal.position,
-            proposal.potential_energy,
-            proposal.potential_energy_grad,
-            cv_fold,
-        )
-
-        return proposal, info
-
-    return kernel
-
-
 # pylint: disable=too-many-locals
 def cv_kernel(
     potential_fn: Callable,
@@ -392,8 +365,27 @@ def cv_kernel(
     inverse_mass_matrix: Array,
     num_integration_steps: int,
     divergence_threshold: int = 1000,
-):
-    """Create CV HMC kernel"""
+) -> Callable:
+    """Create CV HMC kernel
+
+    The CV HMC kernel takes one MCMC step (comprising a fixed number of integrator
+    steps), advancing from one CVHMC state to another.
+
+    Args:
+        potential_fn:          potential function for model, takes a parameter as a
+                               dict and cross-validation fold number
+        step_size:             HMC step size
+        inverse_mass_matrix:   HMC inv mass matrix. If diagonal, a 1D array, or a
+                               square 2D array.
+        num_integration_steps: number of steps to run the integrator for each proposal
+        divergence_threshold:  minimum change in energy to declare a divergence
+
+    Returns:
+        Callable: HMC kernel as a function
+
+    Raises:
+        ValueError: if inverse_mass_matrix is of incorrect shape.
+    """
 
     ndim = jnp.ndim(inverse_mass_matrix)
     shape = jnp.shape(inverse_mass_matrix)[:1]
@@ -439,7 +431,27 @@ def cv_kernel(
         num_integration_steps,
         divergence_threshold,
     )
-    kernel = cv_hmc(momentum_generator, proposal_generator)
+
+    def kernel(
+        rng_key: jnp.ndarray, state: CVHMCState
+    ) -> Tuple[CVHMCState, NamedTuple]:
+        key_momentum, key_integrator = jax.random.split(rng_key, 2)
+
+        position, potential_energy, potential_energy_grad, cv_fold = state
+        momentum = momentum_generator(key_momentum, position)
+
+        augmented_state = IntegratorState(
+            position, momentum, potential_energy, potential_energy_grad
+        )
+        proposal, info = proposal_generator(key_integrator, augmented_state, cv_fold)
+        proposal = CVHMCState(
+            proposal.position,
+            proposal.potential_energy,
+            proposal.potential_energy_grad,
+            cv_fold,
+        )
+        return proposal, info
+
     return kernel
 
 

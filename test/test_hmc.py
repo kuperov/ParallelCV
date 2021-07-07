@@ -67,7 +67,6 @@ class TestInference(unittest.TestCase):
             rng_key=self.rng_key,
         )
         self.assertIsNotNone(states)
-        self.assertEqual(accumulator.divergence_count, 0)
 
 
 if __name__ == "__main__":

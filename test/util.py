@@ -28,7 +28,7 @@ class TestCase(unittest.TestCase):
     def assertClose(self, array1, array2, msg=None, **kwargs) -> None:
         """Assert all elements of array1 and array2 are close in value.
 
-        Keyword args:
+        Args:
             array1: first array for comparison
             array2: second array for comparison
             msg: message to display on error

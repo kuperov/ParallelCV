@@ -142,7 +142,7 @@ class _Posterior(az.InferenceData):
         Number of chains and draws per chain are the same as the original inference
         procedure.
 
-        Keyword arguments:
+        Args:
             cv_scheme: name of cross-validation scheme to apply
             rng_key:   random generator state
             kwargs:    arguments to pass to cross-validation scheme constructor
@@ -236,7 +236,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
     ) -> None:
         """Create a new CrossValidation instance
 
-        Keyword arguments:
+        Args:
             post:         full-data posterior
             accumulator:  state accumulator used during inference step
             states:       MCMC states, as dict keyed by parameter
@@ -390,7 +390,7 @@ class Model:
         The shape of the array corresponds to the shape of the model's
         dependence structure, or a 1-dimensional array if data are iid.
 
-        Keyword args:
+        Args:
             params:  dict of model parameters, in constrained (model)
                      parameter space
 
@@ -404,7 +404,7 @@ class Model:
 
         JAX needs to be able to trace this function.
 
-        Keyword args:
+        Args:
             params: dict of model parameters in constrained (model)
                     parameter space
         """
@@ -417,7 +417,7 @@ class Model:
 
         FIXME: needs some kind of index to identify the conditioning values
 
-        Keyword arguments:
+        Args:
             params:  a dict of parameters (constrained (model) parameter
                      space) that potentially contains vectors
             coords:  points at which to evaluate predictive density, expressed
@@ -439,7 +439,7 @@ class Model:
     ) -> jnp.DeviceArray:
         """Potential for a CV fold.
 
-        Keyword arguments:
+        Args:
             inf_params: model parameters in inference (unconstrained) space
             lhood_mask: mask to apply to likelihood contributions by elementwise
                         multiplication
@@ -456,7 +456,7 @@ class Model:
     def potential(self, inf_params: InfParams, cv_fold: int = -1) -> jnp.DeviceArray:
         """Potential for a CV fold.
 
-        Keyword arguments:
+        Args:
             inf_params: model parameters in inference (unconstrained) space
             cv_fold:    NOT USED - dummy parameter so we can reuse HMC routines
 
@@ -487,7 +487,7 @@ class Model:
         The argument model_params is expressed in constrained (model) coordinate
         space.
 
-        Keyword arguments:
+        Args:
             model_params: dictionary of parameters in constrained (model)
                           parameter space, keyed by name
 
@@ -503,7 +503,7 @@ class Model:
         Maps unconstrained (inference) params in `inf_params` to corresponding
         parameters in constrained (model) parameter space.
 
-        Keyword arguments:
+        Args:
             inf_params: dictionary of parameters in unconstrained (sampler) parameter
                         space, keyed by name
 
@@ -517,7 +517,7 @@ class Model:
     def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
         """Return total log determinant of transformation to constrained parameters
 
-        Keyword arguments:
+        Args:
             model_params: dic of parameters in constrained (model) parameter space
 
         Returns:
@@ -536,7 +536,7 @@ class Model:
     ) -> _Posterior:
         """Run HMC with full dataset, tuned by Stan+NUTS warmup
 
-        Keyword arguments:
+        Args:
             draws:          number of draws per chain
             warmup_steps:   number of Stan warmup steps to run
             chains:         number of chains for main inference step

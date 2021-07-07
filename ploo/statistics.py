@@ -37,7 +37,7 @@ def split_rhat(samples: jnp.DeviceArray) -> jnp.DeviceArray:
 
          \hat{R} = \sqrt{\frac{N-1}{N} + \frac{B}{NW}}
 
-    Keyword arguments:
+    Args:
         samples: 2D array of samples θ⁽ⁿᵐ⁾ (chains m on axis 0, draw n axis 1)
 
     Returns:
@@ -64,7 +64,7 @@ def chain_variance(samples):
          W = \frac{1}{M}\sum_{m=1}^M \left[\frac{1}{N-1}\sum_{m=1}^N
          \left(\theta^{(nm)}-\bar{\theta}^{(\cdot m)}\right)\right]^2
 
-    Keyword arguments:
+    Args:
         samples: 2D array of samples θ⁽ⁿᵐ⁾ (chains m on axis 0, draw n axis 1)
 
     Returns:
@@ -87,7 +87,7 @@ def ess(x: jnp.DeviceArray, relative=False):
     Some parts also adapted from ArviZ, see:
     https://github.com/arviz-devs/arviz/blob/8115c7a1b8046797229b654c8389b7c26769aa82/arviz/stats/diagnostics.py#L65
 
-    Keyword args:
+    Args:
         samples: 2D array of samples
         relative: if true return relative measure
     """  # noqa: B950

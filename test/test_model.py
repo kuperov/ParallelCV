@@ -62,7 +62,11 @@ class _GaussianVarianceModel(Model):
         return jnp.sum(lpred)
 
     def to_inference_params(self, model_params: ModelParams) -> InfParams:
-        unconstrained = {"sigma_sq": self.sigma_sq_transform(model_params["sigma_sq"])}
+        unconstrained = {
+            "sigma_sq": self.sigma_sq_transform.to_unconstrained(
+                model_params["sigma_sq"]
+            )
+        }
         return unconstrained
 
     def to_model_params(self, inf_params: InfParams) -> ModelParams:

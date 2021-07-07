@@ -12,7 +12,12 @@ from tabulate import tabulate
 from .model import CrossValidation
 
 
-class ModelComparison:
+class _ModelComparison:
+    """Captures a CV ordering between models
+
+    Users should never instantiate this class; use `compare` instead.
+    """
+
     def __init__(
         self, ordered_cvs: List[Tuple[str, CrossValidation]], cv_type: str
     ) -> None:
@@ -39,7 +44,12 @@ class ModelComparison:
         ]
         return "\n".join(output)
 
-    def names(self):
+    def names(self) -> List[str]:
+        """Names of cross-validated models
+
+        Returns
+            list of names
+        """
         return [n for n, _ in self.ordered_cvs]
 
 
@@ -63,4 +73,4 @@ def compare(*args: List[CrossValidation], **kwargs: Dict[str, CrossValidation]):
     cv_types = [cv.scheme.name for (_, cv) in ordering]
     if any(cv_types[0] != t for t in cv_types):
         raise Exception(f'CV types must be the same. Got: {", ".join(cv_types)}.')
-    return ModelComparison(ordering, cv_type=cv_types[0])
+    return _ModelComparison(ordering, cv_type=cv_types[0])
