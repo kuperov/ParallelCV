@@ -79,7 +79,9 @@ class _GaussianVarianceModel(Model):
         return self.sigma_sq_transform.log_det(model_params["sigma_sq"])
 
 
-class TestModelParam(unittest.TestCase):
+class TestModelInferenceAndParams(unittest.TestCase):
+    """Model inference and parameter manipulation"""
+
     def setUp(self) -> None:
         self.y = jnp.array([5.0])
         self.model = _GaussianVarianceModel(
@@ -87,6 +89,7 @@ class TestModelParam(unittest.TestCase):
         )
 
     def test_log_transform(self):
+        """Log transformation between parameter on half line and full line"""
         llik = self.model.log_likelihood(model_params={"sigma_sq": 2.5})
         lprior = self.model.log_prior({"sigma_sq": 2.5})
         ldet = self.model.log_det({"sigma_sq": 2.5})
@@ -94,12 +97,14 @@ class TestModelParam(unittest.TestCase):
         self.assertAlmostEqual(llik + lprior, -pot - ldet, places=5)
 
     def test_initial_value(self):
+        """Initial parameter value for seeding MCMC"""
         self.assertDictEqual(self.model.initial_value(), {"sigma_sq": 1.0})
         self.assertDictEqual(
             self.model.initial_value_unconstrained(), {"sigma_sq": 0.0}
         )
 
     def test_log_pred(self):
+        """Log predictive, log p(ỹ | y)"""
         for sig_sq in [0.5, 1.5]:
             self.assertEqual(
                 self.model.log_cond_pred({"sigma_sq": sig_sq}, 2),

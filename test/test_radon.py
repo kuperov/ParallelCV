@@ -19,6 +19,7 @@ class TestRadonModel(TestCase):
     """Test definition and inference by MCMC of radon model"""
 
     def test_inference(self):
+        """Check a few iterations of MCMC. This seems way slower than it should be."""
         chex.clear_trace_counter()
         model = RadonCountyIntercept()
         # sanity checks
