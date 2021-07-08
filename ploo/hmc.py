@@ -267,7 +267,7 @@ def cross_validate(
     """
     # assuming 4 chains and a 1-dimensional cross-validation structure,
     # chain_indexes = [0, 1, 2, 3, 0, 1, 2, 3, 0, ...]
-    chain_indexes = jnp.resize(jnp.arange(chains), chains * cv_folds)
+    chain_indexes = jnp.concatenate([jnp.arange(chains)] * cv_folds)
     # fold_indexes  = [0, 0, 0, 0, 1, 1, 1, 1, 2, ...]
     fold_indexes = jnp.repeat(jnp.arange(cv_folds), chains)
     assert chain_indexes.shape == fold_indexes.shape
