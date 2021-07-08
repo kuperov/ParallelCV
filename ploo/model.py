@@ -545,7 +545,7 @@ class Model:
         chains: int = 8,
         seed: int = 42,
         out: Progress = None,
-        warmup_results=None,
+        warmup_results: WarmupResults = None,
     ) -> _Posterior:
         """Run HMC with full dataset, tuned by Stan+NUTS warmup
 
@@ -579,18 +579,18 @@ class Model:
             )
 
         write(
-            f"Obtaining {draws*chains:,} full-data posterior draws "
+            f"HMC for {draws*chains:,} full-data draws "
             f"({chains} chains, {draws:,} draws per chain)..."
         )
         timer = Timer()
         accum, states = full_data_inference(
             self.potential, warmup_results, draws, chains, inference_key
         )
-        write(
-            f"      {chains*draws:,} HMC draws took {timer}"
-            f" ({chains*draws/timer.sec:,.0f} iter/sec)."
-        )
-
+        write("      Retrieving results from GPU...")
+        divergent_chains = jnp.sum(accum.divergence_count > 0)
+        if divergent_chains > 0:
+            write(f"      WARNING: {divergent_chains} divergent chain(s).")
+        write("      Mapping draws back to model coordinates...")
         # map positions back to model coordinates
         position_model = vmap(self.to_model_params)(states.position)
         # want axes to be (chain, draws, ... <variable dims> ...)
@@ -598,6 +598,10 @@ class Model:
             var: jnp.swapaxes(draws, axis1=0, axis2=1)
             for (var, draws) in position_model.items()
         }
+        write(
+            f"      {chains*draws:,} HMC draws took {timer}"
+            f" ({chains*draws/timer.sec:,.0f} iter/sec)."
+        )
 
         return _Posterior(
             self,
