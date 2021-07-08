@@ -586,11 +586,9 @@ class Model:
         accum, states = full_data_inference(
             self.potential, warmup_results, draws, chains, inference_key
         )
-        write("      Retrieving results from GPU...")
         divergent_chains = jnp.sum(accum.divergence_count > 0)
         if divergent_chains > 0:
             write(f"      WARNING: {divergent_chains} divergent chain(s).")
-        write("      Mapping draws back to model coordinates...")
         # map positions back to model coordinates
         position_model = vmap(self.to_model_params)(states.position)
         # want axes to be (chain, draws, ... <variable dims> ...)
