@@ -7,3 +7,4 @@ Alex Cooper <alex@acooper.org>
 
 from .ar_model import AR1
 from .gaussian_model import GaussianModel
+from .radon import RadonCountyIntercept
