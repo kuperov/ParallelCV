@@ -5,3 +5,4 @@ ploo.egg-info
 .vscode
 *.nogit
 build
+notebooks/Untitled*ipynb
