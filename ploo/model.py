@@ -21,7 +21,6 @@ from tabulate import tabulate
 from .cv import CrossValidationScheme, cv_factory
 from .hmc import (
     CrossValidationState,
-    CVHMCState,
     InfParams,
     WarmupResults,
     cross_validate,

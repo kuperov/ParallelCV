@@ -10,6 +10,7 @@ which defines the CV folds and deletion patterns.
 
 from typing import Callable, Dict, List, NamedTuple, Tuple, Union
 
+import chex
 import jax
 import numpy as np
 from blackjax import nuts, stan_warmup
@@ -446,6 +447,8 @@ def cv_kernel(
         divergence_threshold,
     )
 
+    @jax.jit
+    # @chex.assert_max_traces(n=1)
     def kernel(
         rng_key: jnp.ndarray, state: CVHMCState
     ) -> Tuple[CVHMCState, NamedTuple]:

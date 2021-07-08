@@ -6,6 +6,7 @@ Alex Cooper <alex@acooper.org>
 import unittest
 from types import FunctionType
 
+import chex
 import jax
 from arviz.data.inference_data import InferenceData
 from jax import numpy as jnp
@@ -138,11 +139,17 @@ class TestComparisons(unittest.TestCase):
         model_1 = _GaussianVarianceModel(y, mean=0.0)  # good
         model_2 = _GaussianVarianceModel(y, mean=-10.0)  # bad
         model_3 = _GaussianVarianceModel(y, mean=50.0)  # awful
+        chex.clear_trace_counter()
         post_1 = model_1.inference(draws=1e3, chains=4, out=DummyProgress())
+        chex.clear_trace_counter()
         post_2 = model_2.inference(draws=1e3, chains=4, out=DummyProgress())
+        chex.clear_trace_counter()
         post_3 = model_3.inference(draws=1e3, chains=4, out=DummyProgress())
+        chex.clear_trace_counter()
         cv_1 = post_1.cross_validate()
+        chex.clear_trace_counter()
         cv_2 = post_2.cross_validate()
+        chex.clear_trace_counter()
         cv_3 = post_3.cross_validate()
         # check just CV posterior m1
         m1_av_f0 = cv_1.arviz(cv_fold=0)

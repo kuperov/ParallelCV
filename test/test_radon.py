@@ -8,6 +8,7 @@ This module tests the classic radon model from posteriordb.
 import unittest
 from test.util import TestCase
 
+import chex
 from jax import numpy as jnp
 
 from ploo.model import _Posterior
@@ -19,6 +20,7 @@ class TestRadonModel(TestCase):
     """Test definition and inference by MCMC of radon model"""
 
     def test_inference(self):
+        chex.clear_trace_counter()
         model = RadonCountyIntercept()
         # sanity checks
         ipot = model.potential(model.initial_value())
