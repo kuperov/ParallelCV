@@ -91,10 +91,10 @@ class RadonCountyIntercept(Model):
         return st.norm.logpdf(self.log_radon, loc=mu, scale=sigma_y)
 
     def log_prior(self, model_params: ModelParams) -> chex.ArrayDevice:
-        alpha_p = st.norm.logpdf(model_params["alpha"], loc=0.0, scale=1.0)
-        sigma_p = st.norm.logpdf(model_params["sigma_y"], loc=0.0, scale=10.0)
-        beta_p = st.norm.logpdf(model_params["beta"], loc=0.0, scale=10.0)
-        return alpha_p + sigma_p + beta_p
+        alpha_prior = st.norm.logpdf(model_params["alpha"], loc=0.0, scale=1.0)
+        sigma_prior = st.norm.logpdf(model_params["sigma_y"], loc=0.0, scale=10.0)
+        beta_prior = st.norm.logpdf(model_params["beta"], loc=0.0, scale=10.0)
+        return jnp.sum(alpha_prior) + sigma_prior + beta_prior
 
     def log_cond_pred(
         self, model_params: ModelParams, coords: chex.ArrayDevice
