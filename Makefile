@@ -5,14 +5,17 @@ ploo package Makefile
 
 The following targets are available:
 
-  help   display this message
-  nb     start a jupyter notebook
-  test   run unit tests
-  venv   create the virtual environment in venv/
-  pretty format code
-  lint   run code linters
-  config first-time environment setup
-  clean  remove generated files
+  help     display this message
+  nb       start a jupyter notebook
+  test     run unit tests
+  gpu      install version of jax for GPUs (CUDA 11x)
+  cpu      install version of jax for CPUs
+  venv     create the virtual environment in venv/
+  pretty   format code
+  lint     run code linters
+  fixtures generate testing model fixtures
+  config   first-time environment setup
+  clean    remove generated files
 
 You can invoke any of the above with:
 
@@ -56,6 +59,16 @@ lint:
 	# check for obvious bugs or code standard violations
 	venv/bin/flake8 ploo test
 	# venv/bin/pylint ploo test
+
+gpu:
+	# install gpu-enabled version of jax
+	venv/bin/python3 -m pip install --upgrade pip
+	venv/bin/python3 -m pip install --upgrade "jax[cuda111]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
+
+cpu:
+	# install cpu-only version of jax
+	venv/bin/python3 -m pip install --upgrade pip
+	venv/bin/python3 -m pip install --upgrade "jax[cpu]"
 
 .PHONY: fixtures
 fixtures:
