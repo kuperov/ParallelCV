@@ -30,6 +30,6 @@ setup(
         "Programming Language :: Python :: 3.7",
     ],
     packages=find_packages(exclude=["test"]),
-    install_requires=["arviz", "blackjax", "jax", "jaxlib", "matplotlib", "tabulate"],
+    install_requires=["arviz", "blackjax", "chex", "jax", "jaxlib", "matplotlib", "tabulate"],
     include_package_data=True,
 )
