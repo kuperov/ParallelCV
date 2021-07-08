@@ -6,45 +6,45 @@ Alex Cooper <alex@acooper.org>
 Design information
 ------------------
 
-Class diagram::
+Class diagram, like it's 2005::
 
-┌─────────────────────────────┐           ┌─────────────────────┐
-│ Model                       │           │ arviz.InferenceData │
-├─────────────────────────────┤           └───────────▲─────────┘
-│                             │                       │inherits
-│ + potential()               │instantiate┌───────────┴─────────┐
-│ + inference()───────────────┼──────────►│ _Posterior          │
-│                             │           ├─────────────────────┤
-│ Abstract methods            │           │ + post_draws        │
-│                             │        ┌──┼─+ cross_validate()  │
-│ # log_likelihood()          │        │  │ + summarize()       │
-│ # log_prior()               │        │  │ ...Arviz methods... │
-│ # cond_log_pred()           │        │  └─────────────────────┘
-│ # initial_param()           │        │instantiate
-│ # to_unconstrained_params() │        │  ┌─────────────────────┐
-│ # to_constrained_params()   │        └─►│ CrossValidation     │
-│                             │           ├─────────────────────┤
-└─────────────────────────────┘           │ + scheme            │
-                                          │ + elpd              │
-                        ┌─────────────────┤ + elpd_se           │
-                        │ aggregate       │ + trace_plots()     │
-                        │                 │ + densities()       │
-                        │                 └─────────────────────┘
-    ┌───────────────────┴───┐
-    │ CrossValidationScheme │
-    ├───────────────────────┤
-    │ + mask_for()          │
-    │ + coordinates_for()   │
-    │ + pred_index_array()  │
-    │ + mask_array()        │
-    │ + summary_array()     │
-    │                       │
-    └▲──────▲────────▲─────▲┘
-     │      │        │     │
-     │      │        │     │
-┌────┴┐ ┌───┴─┐ ┌────┴──┐ ┌┴────┐
-│ LOO │ │ LFO │ │ KFold │ │ LGO │
-└─────┘ └─────┘ └───────┘ └─────┘
+    ┌─────────────────────────────┐           ┌─────────────────────┐
+    │ Model                       │           │ arviz.InferenceData │
+    ├─────────────────────────────┤           └───────────▲─────────┘
+    │                             │                       │inherits
+    │ + potential()               │instantiate┌───────────┴─────────┐
+    │ + inference()───────────────┼──────────►│ _Posterior          │
+    │                             │           ├─────────────────────┤
+    │ Abstract methods            │           │ + post_draws        │
+    │                             │        ┌──┼─+ cross_validate()  │
+    │ # log_likelihood()          │        │  │ + summarize()       │
+    │ # log_prior()               │        │  │ ...Arviz methods... │
+    │ # cond_log_pred()           │        │  └─────────────────────┘
+    │ # initial_param()           │        │instantiate
+    │ # to_unconstrained_params() │        │  ┌─────────────────────┐
+    │ # to_constrained_params()   │        └─►│ CrossValidation     │
+    │                             │           ├─────────────────────┤
+    └─────────────────────────────┘           │ + scheme            │
+                                            │ + elpd              │
+                            ┌─────────────────┤ + elpd_se           │
+                            │ aggregate       │ + trace_plots()     │
+                            │                 │ + densities()       │
+                            │                 └─────────────────────┘
+        ┌───────────────────┴───┐
+        │ CrossValidationScheme │
+        ├───────────────────────┤
+        │ + mask_for()          │
+        │ + coordinates_for()   │
+        │ + pred_index_array()  │
+        │ + mask_array()        │
+        │ + summary_array()     │
+        │                       │
+        └▲──────▲────────▲─────▲┘
+        │      │        │     │
+        │      │        │     │
+    ┌────┴┐ ┌───┴─┐ ┌────┴──┐ ┌┴────┐
+    │ LOO │ │ LFO │ │ KFold │ │ LGO │
+    └─────┘ └─────┘ └───────┘ └─────┘
 
 """
 
