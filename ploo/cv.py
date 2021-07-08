@@ -6,7 +6,7 @@ Alex Cooper <alex@acooper.org>
 This module compares models using cross-validation output
 """
 
-from typing import Callable, Iterable, Iterator, Sequence
+from typing import Callable, DefaultDict, Iterable, Iterator, Sequence, Tuple
 
 import numpy as np
 from jax import numpy as jnp
@@ -227,6 +227,51 @@ class KFold(CrossValidationScheme):
 
     def cv_folds(self) -> int:
         return self.k
+
+
+class LGO(CrossValidationScheme):
+    """Leave-group-out (LGO) cross-validation scheme
+
+    Leaves a single group out of the posterior each fold. Groups are identified
+    by an array of group numbers.
+
+    .. note::
+        At this time, only a 1D array of likelihood contributions is supported,
+        corresponding to the bottom of the model hierarchy.
+    """
+
+    def __init__(self, shape: Tuple, group_identifiers: Iterable[int]) -> None:
+        """ """
+        self.shape = shape if isinstance(shape, Sequence) else (shape,)
+        assert len(self.shape) == 1, "Only 1D lower level supported"
+        self.ids = list(group_identifiers)
+        groups = DefaultDict(list)
+        for i, x in enumerate(self.ids):
+            groups[x].append(i)
+        self.num_folds = len(groups)
+        mutable_masks = np.ones(shape=(self.num_folds, self.shape[0]))
+        # define fresh indexes, contiguous and starting at zero
+        group_indexes = dict(enumerate(groups))
+        self.coords = {
+            i: jnp.array(groups[group_id]) for i, group_id in group_indexes.items()
+        }
+        for i in range(self.num_folds):
+            mutable_masks[i, self.coords[i]] = 0.0
+        self.masks = jnp.array(mutable_masks)
+        name = f"Leave-group-out (LGO) CV with {self.num_folds} groups/folds"
+        super().__init__(name)
+
+    def cv_folds(self) -> int:
+        return self.num_folds
+
+    def coordinates_for(self, fold: CVFold) -> jnp.DeviceArray:
+        return self.coords[fold]
+
+    def mask_for(self, fold: CVFold) -> jnp.DeviceArray:
+        return self.masks[fold]
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(range(self.num_folds))
 
 
 def cv_factory(name: str) -> Callable:

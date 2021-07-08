@@ -10,7 +10,6 @@ which defines the CV folds and deletion patterns.
 
 from typing import Callable, Dict, List, NamedTuple, Tuple, Union
 
-import chex
 import jax
 import numpy as np
 from blackjax import nuts, stan_warmup

@@ -11,6 +11,7 @@ import numpy as np
 from jax import random
 
 from ploo import LFO, LOO, KFold
+from ploo.cv import LGO
 
 
 class TestCrossValidation(TestCase):
@@ -90,6 +91,15 @@ class TestCrossValidation(TestCase):
         kfold_1_fold0_mask = kfold_1.mask_for(kfold_1_fold0)
         self.assertEqual(kfold_1_fold0_mask.shape, (20, 10))
         self.assertEqual(np.sum(kfold_1_fold0_mask), 4 * 20 * 10 / 5)
+
+    def test_lgo(self):
+        grps = [1] * 5 + [2] * 3 + [3] * 2
+        lgo_1 = LGO(10, grps)
+        self.assertEqual(lgo_1.shape, (10,))
+        self.assertEqual(lgo_1.cv_folds(), 3)
+        lgo_1_summ = lgo_1.mask_array()
+        self.assertClose(lgo_1_summ[0][0:3], [0] * 3)
+        self.assertEqual(np.sum(lgo_1_summ), 3 * 10 - 10)
 
 
 if __name__ == "__main__":
