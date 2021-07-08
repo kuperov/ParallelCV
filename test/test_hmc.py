@@ -9,7 +9,14 @@ from jax import numpy as jnp
 from jax import random
 from jax.interpreters.xla import DeviceArray
 
-from ploo.hmc import WarmupResults, cross_validate, full_data_inference, warmup
+from ploo.hmc import (
+    CrossValidationState,
+    CVHMCState,
+    WarmupResults,
+    cross_validate,
+    full_data_inference,
+    warmup,
+)
 from ploo.models import GaussianModel
 
 
@@ -46,7 +53,7 @@ class TestInference(unittest.TestCase):
 
     def test_full_data_inference(self):
         """Smoke test full-data inference. Better tests in test_model.py"""
-        states = full_data_inference(
+        accum, states = full_data_inference(
             self.gauss.cv_potential,
             self.warmup,
             draws=1000,
@@ -54,6 +61,8 @@ class TestInference(unittest.TestCase):
             rng_key=self.rng_key,
         )
         self.assertEqual(states.position["mu"].shape, (1000, 4))
+        self.assertIsInstance(accum, CrossValidationState)
+        self.assertIsInstance(states, CVHMCState)
 
     def test_cross_validation(self):
         """Smoke test cross-validation. Better tests in test_model.py"""

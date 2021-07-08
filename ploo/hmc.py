@@ -204,19 +204,33 @@ def full_data_inference(
     initial_states = vmap(new_cv_state, in_axes=(0, None, None))(
         warmup_res.starting_values, potential, -1
     )
+    initial_accumulator = CrossValidationState(
+        divergence_count=jnp.zeros((chains,)),
+        accepted_count=jnp.zeros((chains,)),
+        sum_log_pred_dens=jnp.zeros((chains,)),
+        hmc_state=initial_states,
+    )
     kernel = cv_kernel(
         potential, warmup_res.step_size, warmup_res.mass_matrix, warmup_res.int_steps
     )
 
-    def one_step(states, iter_key):
+    def one_step(state: CrossValidationState, iter_key):
         keys = random.split(iter_key, chains)
-        states, _ = vmap(kernel)(keys, states)
-        return states, states
+        hmc_state, hmc_info = vmap(kernel)(keys, state.hmc_state)
+        divs = state.divergence_count + jnp.where(hmc_info.is_divergent, 1, 0)
+        accepted = state.accepted_count + jnp.where(hmc_info.is_accepted, 1, 0)
+        updated_state = CrossValidationState(
+            divergence_count=divs,
+            accepted_count=accepted,
+            sum_log_pred_dens=state.sum_log_pred_dens,
+            hmc_state=hmc_state,
+        )
+        return updated_state, hmc_state
 
     draw_keys = random.split(rng_key, draws)
-    _, states = lax.scan(one_step, initial_states, draw_keys)
+    accumulator, states = lax.scan(one_step, initial_accumulator, draw_keys)
 
-    return states
+    return accumulator, states
 
 
 # pylint: disable=too-many-arguments

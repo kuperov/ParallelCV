@@ -21,6 +21,7 @@ from tabulate import tabulate
 from .cv import CrossValidationScheme, cv_factory
 from .hmc import (
     CrossValidationState,
+    CVHMCState,
     InfParams,
     WarmupResults,
     cross_validate,
@@ -48,15 +49,16 @@ class _Posterior(az.InferenceData):
     range of ArviZ posterior exploration features directly on this object.
 
     Members:
-        model:      Model instance this was created from
-        post_draws: map of posterior draw arrays, keyed by variable, with axes
-                    (chain, draw, variable_axis0, ...)
-        cv_draws:   cross-validation draws
-        seed:       seed used when invoking inference
-        chains:     number of chains per CV posterior
-        warmup_res: results from warmup
-        rng_key:    random number generator state
-        write:      function for writing output to the console
+        model:       Model instance this was created from
+        post_draws:  map of posterior draw arrays, keyed by variable, with axes
+                     (chain, draw, variable_axis0, ...)
+        cv_draws:    cross-validation draws
+        seed:        seed used when invoking inference
+        chains:      number of chains per CV posterior
+        warmup_res:  results from warmup
+        accumulator: accumulator state object from inference routine
+        rng_key:     random number generator state
+        write:       function for writing output to the console
     """
 
     def __init__(
@@ -67,6 +69,7 @@ class _Posterior(az.InferenceData):
         chains: int,
         draws: int,
         warmup_res: WarmupResults,
+        accumulator: CrossValidationState,
         rng_key: chex.ArrayDevice,
         write: Callable,
     ) -> None:
@@ -78,15 +81,25 @@ class _Posterior(az.InferenceData):
         self.warmup_res = warmup_res
         self.rng_key = rng_key
         self.write = write
+        self.chain_divergences = accumulator.divergence_count
+        self.total_divergences = jnp.sum(accumulator.divergence_count)
         # construct xarrays for ArviZ
-        # FIXME: this incorrectly assumes univariate parameters
-        posterior = xr.Dataset(
-            {var: (["chain", "draw"], drws) for var, drws in self.post_draws.items()},
-            coords={
-                "chain": (["chain"], jnp.arange(self.chains)),
-                "draw": (["draw"], jnp.arange(self.draws)),
-            },
-        )
+        post_draw_map = {}
+        coords = {  # gets updated for
+            "chain": (["chain"], jnp.arange(self.chains)),
+            "draw": (["draw"], jnp.arange(self.draws)),
+        }
+        for var, drws in self.post_draws.items():
+            # dimensions are chain, draw number, variable dim 0, variable dim 1, ...
+            extra_dims = [
+                (f"{var}{i}", length) for i, length in enumerate(drws.shape[2:])
+            ]
+            keys = ["chain", "draw"] + [n for n, len in extra_dims]
+            post_draw_map[var] = (keys, drws)
+            for dimname, length in extra_dims:
+                coords[dimname] = ([dimname], jnp.arange(length))
+
+        posterior = xr.Dataset(post_draw_map, coords=coords)
         super().__init__(posterior=posterior)
 
     def __str__(self) -> str:
@@ -571,7 +584,7 @@ class Model:
             f"({chains} chains, {draws:,} draws per chain)..."
         )
         timer = Timer()
-        states = full_data_inference(
+        accum, states = full_data_inference(
             self.potential, warmup_results, draws, chains, inference_key
         )
         write(
@@ -594,6 +607,7 @@ class Model:
             chains=chains,
             draws=draws,
             warmup_res=warmup_results,
+            accumulator=accum,
             rng_key=post_key,
             write=write,
         )
