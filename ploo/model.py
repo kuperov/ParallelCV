@@ -9,6 +9,7 @@ arbitrary likelihood models.
 from typing import Any, Callable, Dict, Iterable, Tuple, Union
 
 import arviz as az
+import chex
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
@@ -30,7 +31,7 @@ from .statistics import ess, split_rhat
 from .util import Progress, Timer
 
 # model parameters are in a constrained coordinate space
-ModelParams = Dict[str, jnp.DeviceArray]
+ModelParams = Dict[str, chex.ArrayDevice]
 
 # CV fold is either 1D or 2D integer index
 CVFold = Union[int, Tuple[int, int]]
@@ -61,12 +62,12 @@ class _Posterior(az.InferenceData):
     def __init__(
         self,
         model: "Model",
-        post_draws: Dict[str, jnp.DeviceArray],
+        post_draws: Dict[str, chex.ArrayDevice],
         seed: int,
         chains: int,
         draws: int,
         warmup_res: WarmupResults,
-        rng_key: jnp.DeviceArray,
+        rng_key: chex.ArrayDevice,
         write: Callable,
     ) -> None:
         self.model = model
@@ -134,7 +135,7 @@ class _Posterior(az.InferenceData):
     def cross_validate(
         self,
         cv_type: Union[str, CrossValidationScheme] = "LOO",
-        rng_key: jnp.DeviceArray = None,
+        rng_key: chex.ArrayDevice = None,
         **kwargs,
     ) -> "CrossValidation":
         """Run cross-validation for this posterior.
@@ -163,10 +164,10 @@ class _Posterior(az.InferenceData):
         masks = cv_scheme.mask_array()
         pred_indexes = cv_scheme.pred_index_array()
 
-        def potential(inf_params: InfParams, cv_fold: int) -> jnp.DeviceArray:
+        def potential(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
             return self.model.cv_potential(inf_params, masks[cv_fold])
 
-        def log_cond_pred(inf_params: InfParams, cv_fold: int) -> jnp.DeviceArray:
+        def log_cond_pred(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
             model_params = self.model.to_model_params(inf_params)
             return self.model.log_cond_pred(model_params, pred_indexes[cv_fold])
 
@@ -231,7 +232,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         self,
         post: _Posterior,
         accumulator: CrossValidationState,
-        states: Dict[str, jnp.DeviceArray],
+        states: Dict[str, chex.ArrayDevice],
         scheme: CrossValidationScheme,
     ) -> None:
         """Create a new CrossValidation instance
@@ -378,7 +379,7 @@ class Model:
 
     name = "Unnamed model"
 
-    def log_likelihood(self, model_params: ModelParams) -> jnp.DeviceArray:
+    def log_likelihood(self, model_params: ModelParams) -> chex.ArrayDevice:
         """Log likelihood
 
         JAX needs to be able to trace this function.
@@ -399,7 +400,7 @@ class Model:
         """
         raise NotImplementedError()
 
-    def log_prior(self, model_params: ModelParams) -> jnp.DeviceArray:
+    def log_prior(self, model_params: ModelParams) -> chex.ArrayDevice:
         """Compute log prior log p(θ)
 
         JAX needs to be able to trace this function.
@@ -411,8 +412,8 @@ class Model:
         raise NotImplementedError()
 
     def log_cond_pred(
-        self, model_params: ModelParams, coords: jnp.DeviceArray
-    ) -> jnp.DeviceArray:
+        self, model_params: ModelParams, coords: chex.ArrayDevice
+    ) -> chex.ArrayDevice:
         """Computes log conditional predictive ordinate, log p(ỹ|θˢ).
 
         FIXME: needs some kind of index to identify the conditioning values
@@ -435,8 +436,8 @@ class Model:
         return self.to_inference_params(self.initial_value())
 
     def cv_potential(
-        self, inf_params: InfParams, likelihood_mask: jnp.DeviceArray
-    ) -> jnp.DeviceArray:
+        self, inf_params: InfParams, likelihood_mask: chex.ArrayDevice
+    ) -> chex.ArrayDevice:
         """Potential for a CV fold.
 
         Args:
@@ -453,7 +454,7 @@ class Model:
         ldet = self.log_det(model_params=model_params)
         return -jnp.sum(llik) - lprior - ldet
 
-    def potential(self, inf_params: InfParams, cv_fold: int = -1) -> jnp.DeviceArray:
+    def potential(self, inf_params: InfParams, cv_fold: int = -1) -> chex.ArrayDevice:
         """Potential for a CV fold.
 
         Args:
@@ -475,8 +476,8 @@ class Model:
 
     @classmethod
     def generate(
-        cls, random_key: jnp.DeviceArray, model_params: ModelParams
-    ) -> jnp.DeviceArray:
+        cls, random_key: chex.ArrayDevice, model_params: ModelParams
+    ) -> chex.ArrayDevice:
         """Generate a dataset corresponding to the specified random key."""
         raise NotImplementedError()
 
@@ -514,7 +515,7 @@ class Model:
         return inf_params
 
     # pylint: disable=unused-argument
-    def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
+    def log_det(self, model_params: ModelParams) -> chex.ArrayDevice:
         """Return total log determinant of transformation to constrained parameters
 
         Args:

@@ -1,5 +1,6 @@
 arviz
 blackjax
+chex
 jax
 jaxlib
 matplotlib
