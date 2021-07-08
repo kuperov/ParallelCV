@@ -9,6 +9,7 @@
         "-s",
         "./test",
         "-p",
+        "-b",
         "test_*.py"
     ],
     "python.testing.pytestEnabled": false,

@@ -13,7 +13,6 @@ from jax import numpy as jnp
 
 from ploo.model import _Posterior
 from ploo.models.radon import RadonCountyIntercept
-from ploo.util import DummyProgress
 
 
 class TestRadonModel(TestCase):
@@ -26,7 +25,7 @@ class TestRadonModel(TestCase):
         ipot = model.potential(model.initial_value())
         self.assertTrue(jnp.isfinite(ipot))
         # run mcmc
-        post = model.inference(draws=100, warmup_steps=100, out=DummyProgress())
+        post = model.inference(draws=100, warmup_steps=100)
         self.assertIsInstance(post, _Posterior)
         self.assertEqual(post.total_divergences, 0)
 

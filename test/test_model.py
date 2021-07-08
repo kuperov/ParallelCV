@@ -14,7 +14,6 @@ from jax.scipy import stats as st
 
 from ploo import LogTransform, Model, compare
 from ploo.model import InfParams, ModelParams
-from ploo.util import DummyProgress
 
 
 class _GaussianVarianceModel(Model):
@@ -109,7 +108,7 @@ class TestModelParam(unittest.TestCase):
 
     def test_inference(self):
         """Check full-data inference and posterior"""
-        post = self.model.inference(draws=1000, chains=4, out=DummyProgress())
+        post = self.model.inference(draws=1000, chains=4)
         # check delegated arviz methods are listed and actually functions
         self.assertIn("plot_density", dir(post))
         self.assertIsInstance(post.plot_density, FunctionType)
@@ -140,11 +139,11 @@ class TestComparisons(unittest.TestCase):
         model_2 = _GaussianVarianceModel(y, mean=-10.0)  # bad
         model_3 = _GaussianVarianceModel(y, mean=50.0)  # awful
         chex.clear_trace_counter()
-        post_1 = model_1.inference(draws=1e3, chains=4, out=DummyProgress())
+        post_1 = model_1.inference(draws=1e3, chains=4)
         chex.clear_trace_counter()
-        post_2 = model_2.inference(draws=1e3, chains=4, out=DummyProgress())
+        post_2 = model_2.inference(draws=1e3, chains=4)
         chex.clear_trace_counter()
-        post_3 = model_3.inference(draws=1e3, chains=4, out=DummyProgress())
+        post_3 = model_3.inference(draws=1e3, chains=4)
         chex.clear_trace_counter()
         cv_1 = post_1.cross_validate()
         chex.clear_trace_counter()

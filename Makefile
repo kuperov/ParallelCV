@@ -1,5 +1,8 @@
 # ploo package 
 
+PYTHON=venv/bin/python3
+JUPYTER=venv/bin/jupyter-lab
+
 define HELP
 ploo package Makefile
 
@@ -36,17 +39,17 @@ nb: venv
 .PHONY: test
 test: venv
 	# run unit tests
-	venv/bin/python -m unittest discover test
+	$(PYTHON) -m unittest discover --buffer test
 
 venv:
 	# create python virtual environment and install deps
 	# you'll need virtualenv and pip installed, obvs
 	rm -rf venv
 	python3 -m virtualenv --python=python3 venv
-	venv/bin/pip3 install --upgrade pip
-	venv/bin/pip3 install -r requirements/requirements.txt
-	venv/bin/pip3 install -r requirements/requirements-dev.txt
-	venv/bin/python3 setup.py develop
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install -r requirements/requirements.txt
+	$(PYTHON) -m install -r requirements/requirements-dev.txt
+	$(PYTHON) setup.py develop
 
 pretty:
 	venv/bin/isort --profile black ploo test
@@ -62,13 +65,13 @@ lint:
 
 gpu:
 	# install gpu-enabled version of jax
-	venv/bin/python3 -m pip install --upgrade pip
-	venv/bin/python3 -m pip install --upgrade "jax[cuda111]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install --upgrade "jax[cuda111]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
 cpu:
 	# install cpu-only version of jax
-	venv/bin/python3 -m pip install --upgrade pip
-	venv/bin/python3 -m pip install --upgrade "jax[cpu]"
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install --upgrade "jax[cpu]"
 
 .PHONY: fixtures
 fixtures:

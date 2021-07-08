@@ -6,7 +6,7 @@ Alex Cooper <alex@acooper.org>
 This module defines a model class that users can extend to implement
 arbitrary likelihood models.
 """
-from typing import Any, Callable, Dict, Iterable, Tuple, Union
+from typing import Any, Dict, Iterable, Tuple, Union
 
 import arviz as az
 import chex
@@ -28,7 +28,7 @@ from .hmc import (
     warmup,
 )
 from .statistics import ess, split_rhat
-from .util import Progress, Timer
+from .util import Timer
 
 # model parameters are in a constrained coordinate space
 ModelParams = Dict[str, chex.ArrayDevice]
@@ -51,35 +51,26 @@ class _Posterior(az.InferenceData):
         model:       Model instance this was created from
         post_draws:  map of posterior draw arrays, keyed by variable, with axes
                      (chain, draw, variable_axis0, ...)
-        cv_draws:    cross-validation draws
-        seed:        seed used when invoking inference
-        chains:      number of chains per CV posterior
         warmup_res:  results from warmup
         accumulator: accumulator state object from inference routine
         rng_key:     random number generator state
-        write:       function for writing output to the console
     """
 
     def __init__(
         self,
         model: "Model",
         post_draws: Dict[str, chex.ArrayDevice],
-        seed: int,
-        chains: int,
-        draws: int,
         warmup_res: WarmupResults,
         accumulator: CrossValidationState,
         rng_key: chex.ArrayDevice,
-        write: Callable,
     ) -> None:
         self.model = model
         self.post_draws = post_draws
-        self.seed = seed
-        self.chains = chains
-        self.draws = draws
+        first_param = next(iter(post_draws))
+        self.chains = post_draws[first_param].shape[0]
+        self.draws = post_draws[first_param].shape[1]
         self.warmup_res = warmup_res
         self.rng_key = rng_key
-        self.write = write
         self.chain_divergences = accumulator.divergence_count
         self.total_divergences = jnp.sum(accumulator.divergence_count)
         # construct xarrays for ArviZ
@@ -109,9 +100,7 @@ class _Posterior(az.InferenceData):
             title,
             "=" * len(title),
             "",
-            f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} "
-            f"chains with seed {self.seed}",
-            "",
+            f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} chains" "",
         ] + [self._post_table()]
         return "\n".join(desc_rows)
 
@@ -169,7 +158,7 @@ class _Posterior(az.InferenceData):
         cv_shape = self.model.log_likelihood(self.model.initial_value()).shape
         cv_scheme = cv_factory(cv_type)(shape=cv_shape, **kwargs)
         cv_chains = self.chains * cv_scheme.cv_folds()
-        self.write(
+        print(
             f"Cross-validation with {cv_scheme.cv_folds():,} folds "
             f"using {cv_chains:,} chains..."
         )
@@ -192,7 +181,7 @@ class _Posterior(az.InferenceData):
             self.chains,
             rng_key,
         )
-        self.write(
+        print(
             f"      {cv_chains*self.draws:,} HMC draws took {timer}"
             f" ({cv_chains*self.draws/timer.sec:,.0f} iter/sec)."
         )
@@ -544,7 +533,6 @@ class Model:
         warmup_steps: int = 500,
         chains: int = 8,
         seed: int = 42,
-        out: Progress = None,
         warmup_results: WarmupResults = None,
     ) -> _Posterior:
         """Run HMC with full dataset, tuned by Stan+NUTS warmup
@@ -554,17 +542,15 @@ class Model:
             warmup_steps:   number of Stan warmup steps to run
             chains:         number of chains for main inference step
             seed:           random seed
-            out:            progress indicator
             warmup_results: use this instead of running warmup
         """
-        write = (out or Progress()).print
         rng_key = random.PRNGKey(seed)
         warmup_key, inference_key, post_key = random.split(rng_key, 3)
 
         if warmup_results:
-            write("Skipping warmup")
+            print("Skipping warmup")
         else:
-            write("Starting Stan warmup using NUTS...")
+            print("Starting Stan warmup using NUTS...")
             timer = Timer()
             warmup_results = warmup(
                 self.potential,
@@ -573,12 +559,12 @@ class Model:
                 chains,
                 warmup_key,
             )
-            write(
+            print(
                 f"      {warmup_steps} warmup draws took {timer}"
                 f" ({warmup_steps/timer.sec:.1f} iter/sec)."
             )
 
-        write(
+        print(
             f"HMC for {draws*chains:,} full-data draws "
             f"({chains} chains, {draws:,} draws per chain)..."
         )
@@ -588,7 +574,7 @@ class Model:
         )
         divergent_chains = jnp.sum(accum.divergence_count > 0)
         if divergent_chains > 0:
-            write(f"      WARNING: {divergent_chains} divergent chain(s).")
+            print(f"      WARNING: {divergent_chains} divergent chain(s).")
         # map positions back to model coordinates
         position_model = vmap(self.to_model_params)(states.position)
         # want axes to be (chain, draws, ... <variable dims> ...)
@@ -596,7 +582,7 @@ class Model:
             var: jnp.swapaxes(draws, axis1=0, axis2=1)
             for (var, draws) in position_model.items()
         }
-        write(
+        print(
             f"      {chains*draws:,} HMC draws took {timer}"
             f" ({chains*draws/timer.sec:,.0f} iter/sec)."
         )
@@ -604,11 +590,7 @@ class Model:
         return _Posterior(
             self,
             post_draws=rearranged_positions,
-            seed=seed,
-            chains=chains,
-            draws=draws,
             warmup_res=warmup_results,
             accumulator=accum,
             rng_key=post_key,
-            write=write,
         )
