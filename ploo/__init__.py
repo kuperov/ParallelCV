@@ -25,7 +25,7 @@ Class diagram, like it's 2005::
     │ # to_constrained_params()   │        └─►│ CrossValidation     │
     │                             │           ├─────────────────────┤
     └─────────────────────────────┘           │ + scheme            │
-                                            │ + elpd              │
+                                              │ + elpd              │
                             ┌─────────────────┤ + elpd_se           │
                             │ aggregate       │ + trace_plots()     │
                             │                 │ + densities()       │
@@ -40,8 +40,8 @@ Class diagram, like it's 2005::
         │ + summary_array()     │
         │                       │
         └▲──────▲────────▲─────▲┘
-        │      │        │     │
-        │      │        │     │
+         │      │        │     │
+         │      │        │     │
     ┌────┴┐ ┌───┴─┐ ┌────┴──┐ ┌┴────┐
     │ LOO │ │ LFO │ │ KFold │ │ LGO │
     └─────┘ └─────┘ └───────┘ └─────┘
