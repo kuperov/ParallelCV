@@ -167,6 +167,9 @@ class TestComparisons(unittest.TestCase):
             self.assertIn(m, repr(cmp_res))
         self.assertIs(cmp_res[0], cv_1)
         self.assertIs(cmp_res["model0"], cv_1)
+        # can a cv with no draws be represented as string?
+        cv1_repr = repr(cv_1)
+        self.assertIsInstance(cv1_repr, str)
 
     def test_one_cv(self):
         """Check a single cross-validation object, retaining draws"""
@@ -179,6 +182,8 @@ class TestComparisons(unittest.TestCase):
         self.assertIsInstance(m1_av_f0, InferenceData)
         m1_av_f1 = cv_1.arviz(cv_fold=1)
         self.assertIsInstance(m1_av_f1, InferenceData)
+        cv_repr = repr(cv_1)
+        self.assertIsInstance(cv_repr, str)
 
 
 if __name__ == "__main__":

@@ -304,21 +304,29 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
 
     @property
     def draws(self) -> int:
+        """Number of draws per chain"""
         return self.post.draws
 
     @property
     def chains(self) -> int:
+        """Number of chains per CV fold"""
         return self.post.chains
+
+    @property
+    def folds(self) -> int:
+        """Number of CV folds in this CV scheme"""
+        return self.scheme.cv_folds()
 
     def __lt__(self, cv):
         return self.elpd.__gt__(cv.elpd)  # note change of sign, want largest first
 
-    def arviz(self, cv_fold):
+    def arviz(self, cv_fold) -> az.InferenceData:
         """Retrieves ArviZ :class:`az.InferenceData` object for a CV fold
 
         :param cv_fold: index of CV fold corresponding to desired posterior
-
         :raise Exception: if draws were not retained, we can't analyze them
+        :return: an ArviZ object
+        :rtype: arviz.InferenceData
         """
         if not self.states:
             raise Exception("States not retained. Cannot construct ArviZ object.")
