@@ -596,7 +596,7 @@ class Model:
                 warmup_key,
             )
             print(
-                f"      {warmup_steps} warmup draws took {timer}"
+                f"      {warmup_steps:,} warmup draws took {timer}"
                 f" ({warmup_steps/timer.sec:.1f} iter/sec)."
             )
             print(
