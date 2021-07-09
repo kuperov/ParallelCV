@@ -92,7 +92,7 @@ class RadonCountyIntercept(Model):
         beta = model_params["beta"]
         # mu is conditional mean
         mu = alpha[self.county_index] + beta * self.floor_measure
-        return st.norm.logpdf(self.log_radon, loc=mu, scale=sigma_y)
+        return st.norm.logpdf((self.log_radon - mu) / sigma_y, loc=0.0, scale=1.0)
 
     def log_prior(self, model_params: ModelParams) -> chex.ArrayDevice:
         alpha_prior = st.norm.logpdf(model_params["alpha"], loc=0.0, scale=1.0)
@@ -107,7 +107,7 @@ class RadonCountyIntercept(Model):
         sigma_y = model_params["sigma_y"]
         beta = model_params["beta"]
         mu = alpha[self.county_index[coords]] + beta * self.floor_measure[coords]
-        return st.norm.logpdf(self.log_radon[coords], loc=mu, scale=sigma_y)
+        return st.norm.logpdf((self.log_radon[coords] - mu) / sigma_y, loc=0, scale=1.0)
 
     def initial_value(self) -> ModelParams:
         return {
