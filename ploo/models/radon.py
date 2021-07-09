@@ -107,7 +107,10 @@ class RadonCountyIntercept(Model):
         sigma_y = model_params["sigma_y"]
         beta = model_params["beta"]
         mu = alpha[self.county_index[coords]] + beta * self.floor_measure[coords]
-        return st.norm.logpdf((self.log_radon[coords] - mu) / sigma_y, loc=0, scale=1.0)
+        log_pred = st.norm.logpdf(
+            (self.log_radon[coords] - mu) / sigma_y, loc=0, scale=1.0
+        )
+        return jnp.mean(log_pred)
 
     def initial_value(self) -> ModelParams:
         return {

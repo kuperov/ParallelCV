@@ -168,7 +168,7 @@ class _Posterior(az.InferenceData):
 
     def cross_validate(
         self,
-        cv_type: Union[str, CrossValidationScheme] = "LOO",
+        cv_scheme: Union[str, CrossValidationScheme] = "LOO",
         rng_key: chex.ArrayDevice = None,
         **kwargs,
     ) -> "CrossValidation":
@@ -189,10 +189,8 @@ class _Posterior(az.InferenceData):
         timer = Timer()
         # shape from a likelihood evaluation: wasteful but prevents mistakes
         cv_shape = self.model.log_likelihood(self.model.initial_value()).shape
-        if isinstance(cv_type, str):
-            cv_scheme = cv_factory(cv_type)(shape=cv_shape, **kwargs)
-        else:
-            cv_scheme = cv_type
+        if isinstance(cv_scheme, str):
+            cv_scheme = cv_factory(cv_scheme)(shape=cv_shape, **kwargs)
         cv_chains = self.chains * cv_scheme.cv_folds()
         print(
             f"Cross-validation with {cv_scheme.cv_folds():,} folds "

@@ -193,7 +193,7 @@ def full_data_inference(
     """Full-data inference on model (i.e. no CV folds dropped)
 
     Args:
-        model:      model to perform inference on
+        potential:  potential function for HMC
         warmup_res: results from warmup procedure
         draws:      number of posterior draws per chain
         chains:     number of chains
