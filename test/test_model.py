@@ -14,7 +14,6 @@ from jax.scipy import stats as st
 
 from ploo import LogTransform, Model, compare
 from ploo.model import InfParams, ModelParams
-from ploo.util import DummyProgress
 
 
 class _GaussianVarianceModel(Model):
@@ -80,7 +79,9 @@ class _GaussianVarianceModel(Model):
         return self.sigma_sq_transform.log_det(model_params["sigma_sq"])
 
 
-class TestModelParam(unittest.TestCase):
+class TestModelInferenceAndParams(unittest.TestCase):
+    """Model inference and parameter manipulation"""
+
     def setUp(self) -> None:
         self.y = jnp.array([5.0])
         self.model = _GaussianVarianceModel(
@@ -88,6 +89,7 @@ class TestModelParam(unittest.TestCase):
         )
 
     def test_log_transform(self):
+        """Log transformation between parameter on half line and full line"""
         llik = self.model.log_likelihood(model_params={"sigma_sq": 2.5})
         lprior = self.model.log_prior({"sigma_sq": 2.5})
         ldet = self.model.log_det({"sigma_sq": 2.5})
@@ -95,12 +97,14 @@ class TestModelParam(unittest.TestCase):
         self.assertAlmostEqual(llik + lprior, -pot - ldet, places=5)
 
     def test_initial_value(self):
+        """Initial parameter value for seeding MCMC"""
         self.assertDictEqual(self.model.initial_value(), {"sigma_sq": 1.0})
         self.assertDictEqual(
             self.model.initial_value_unconstrained(), {"sigma_sq": 0.0}
         )
 
     def test_log_pred(self):
+        """Log predictive, log p(ỹ | y)"""
         for sig_sq in [0.5, 1.5]:
             self.assertEqual(
                 self.model.log_cond_pred({"sigma_sq": sig_sq}, 2),
@@ -109,7 +113,7 @@ class TestModelParam(unittest.TestCase):
 
     def test_inference(self):
         """Check full-data inference and posterior"""
-        post = self.model.inference(draws=1000, chains=4, out=DummyProgress())
+        post = self.model.inference(draws=1000, chains=4)
         # check delegated arviz methods are listed and actually functions
         self.assertIn("plot_density", dir(post))
         self.assertIsInstance(post.plot_density, FunctionType)
@@ -130,9 +134,10 @@ class TestComparisons(unittest.TestCase):
     """Does model selection via cross-validation work?"""
 
     def test_compare_elpd(self):
-        """Check cross-validation for one posterior, and model selection
+        """Check cross-validation for model selection
 
-        All in one big test so we only have to run one set of cross-validations
+        All in one big test so we only have to run one set of cross-validations.
+        We aren't retaining draws here, just using the accumulated elpd.
         """
         gen_key = jax.random.PRNGKey(seed=42)
         y = _GaussianVarianceModel.generate(N=50, mean=0, sigma_sq=10, rng_key=gen_key)
@@ -140,22 +145,17 @@ class TestComparisons(unittest.TestCase):
         model_2 = _GaussianVarianceModel(y, mean=-10.0)  # bad
         model_3 = _GaussianVarianceModel(y, mean=50.0)  # awful
         chex.clear_trace_counter()
-        post_1 = model_1.inference(draws=1e3, chains=4, out=DummyProgress())
+        post_1 = model_1.inference(draws=1e3, chains=4)
         chex.clear_trace_counter()
-        post_2 = model_2.inference(draws=1e3, chains=4, out=DummyProgress())
+        post_2 = model_2.inference(draws=1e3, chains=4)
         chex.clear_trace_counter()
-        post_3 = model_3.inference(draws=1e3, chains=4, out=DummyProgress())
+        post_3 = model_3.inference(draws=1e3, chains=4)
         chex.clear_trace_counter()
         cv_1 = post_1.cross_validate()
         chex.clear_trace_counter()
         cv_2 = post_2.cross_validate()
         chex.clear_trace_counter()
         cv_3 = post_3.cross_validate()
-        # check just CV posterior m1
-        m1_av_f0 = cv_1.arviz(cv_fold=0)
-        self.assertIsInstance(m1_av_f0, InferenceData)
-        m1_av_f1 = cv_1.arviz(cv_fold=1)
-        self.assertIsInstance(m1_av_f1, InferenceData)
         # check comparisons across CVs
         cmp_res = compare(cv_1, cv_2, cv_3)
         self.assertEqual(cmp_res.names(), ["model0", "model1", "model2"])
@@ -167,6 +167,23 @@ class TestComparisons(unittest.TestCase):
             self.assertIn(m, repr(cmp_res))
         self.assertIs(cmp_res[0], cv_1)
         self.assertIs(cmp_res["model0"], cv_1)
+        # can a cv with no draws be represented as string?
+        cv1_repr = repr(cv_1)
+        self.assertIsInstance(cv1_repr, str)
+
+    def test_one_cv(self):
+        """Check a single cross-validation object, retaining draws"""
+        gen_key = jax.random.PRNGKey(seed=42)
+        y = _GaussianVarianceModel.generate(N=50, mean=0, sigma_sq=10, rng_key=gen_key)
+        model_1 = _GaussianVarianceModel(y, mean=0.0)
+        post_1 = model_1.inference(draws=1e3, chains=4)
+        cv_1 = post_1.cross_validate(retain_draws=True)
+        m1_av_f0 = cv_1.arviz(cv_fold=0)
+        self.assertIsInstance(m1_av_f0, InferenceData)
+        m1_av_f1 = cv_1.arviz(cv_fold=1)
+        self.assertIsInstance(m1_av_f1, InferenceData)
+        cv_repr = repr(cv_1)
+        self.assertIsInstance(cv_repr, str)
 
 
 if __name__ == "__main__":

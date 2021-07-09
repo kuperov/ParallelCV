@@ -93,6 +93,7 @@ class TestCrossValidation(TestCase):
         self.assertEqual(np.sum(kfold_1_fold0_mask), 4 * 20 * 10 / 5)
 
     def test_lgo(self):
+        """Test leave-group-out with made-up group identifiers `grps`"""
         grps = [1] * 5 + [2] * 3 + [3] * 2
         lgo_1 = LGO(10, grps)
         self.assertEqual(lgo_1.shape, (10,))

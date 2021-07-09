@@ -18,7 +18,9 @@ import requests
 from jax import numpy as jnp
 
 from ploo import Model
+from ploo.hmc import InfParams
 from ploo.model import ModelParams
+from ploo.transforms import LogTransform
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "radon_data")
 _DATA_FILE = os.path.join(_DATA_DIR, "radon_all.json")
@@ -49,9 +51,9 @@ def _load_data() -> Dict[str, chex.ArrayDevice]:
         data = json.load(data_file)
     N, J = data["N"], data["J"]
     log_radon = jnp.array(data["log_radon"])
-    county_index = jnp.array(data["county_idx"])
+    county_index = jnp.array(data["county_idx"]) - 1  # zero-based
     floor_measure = jnp.array(data["floor_measure"])
-    assert county_index.shape == (N,) and jnp.max(county_index) == J
+    assert county_index.shape == (N,) and jnp.max(county_index) == J - 1
     assert floor_measure.shape == (N,)
     assert log_radon.shape == (N,)
     return {
@@ -85,6 +87,8 @@ class RadonCountyIntercept(Model):
     .. _[1]: https://github.com/stan-dev/posteriordb/blob/master/posterior_database/models/stan/radon_county_intercept.stan
     """  # noqa: B950  # pylint: disable=line-too-long
 
+    sigma_tx = LogTransform()
+
     def __init__(self) -> None:
         """Creates radon county intercept model
 
@@ -104,11 +108,11 @@ class RadonCountyIntercept(Model):
         beta = model_params["beta"]
         # mu is conditional mean
         mu = alpha[self.county_index] + beta * self.floor_measure
-        return st.norm.logpdf(self.log_radon, loc=mu, scale=sigma_y)
+        return st.norm.logpdf((self.log_radon - mu) / sigma_y, loc=0.0, scale=1.0)
 
     def log_prior(self, model_params: ModelParams) -> chex.ArrayDevice:
-        alpha_prior = st.norm.logpdf(model_params["alpha"], loc=0.0, scale=1.0)
-        sigma_prior = st.norm.logpdf(model_params["sigma_y"], loc=0.0, scale=10.0)
+        alpha_prior = st.norm.logpdf(model_params["alpha"], loc=0.0, scale=10.0)
+        sigma_prior = st.norm.logpdf(model_params["sigma_y"], loc=0.0, scale=1.0)
         beta_prior = st.norm.logpdf(model_params["beta"], loc=0.0, scale=10.0)
         return jnp.sum(alpha_prior) + sigma_prior + beta_prior
 
@@ -119,11 +123,28 @@ class RadonCountyIntercept(Model):
         sigma_y = model_params["sigma_y"]
         beta = model_params["beta"]
         mu = alpha[self.county_index[coords]] + beta * self.floor_measure[coords]
-        return st.norm.logpdf(self.log_radon[coords], loc=mu, scale=sigma_y)
+        log_pred = st.norm.logpdf(
+            (self.log_radon[coords] - mu) / sigma_y, loc=0, scale=1.0
+        )
+        return jnp.mean(log_pred)
 
     def initial_value(self) -> ModelParams:
         return {
             "sigma_y": jnp.array(1.0),
             "beta": jnp.array(0.0),
-            "alpha": jnp.array([0.0] * self.J),
+            "alpha": jnp.zeros(shape=(self.J,)),
+        }
+
+    def to_inference_params(self, model_params: ModelParams) -> InfParams:
+        return {
+            "sigma_y": self.sigma_tx.to_unconstrained(model_params["sigma_y"]),
+            "beta": model_params["beta"],
+            "alpha": model_params["alpha"],
+        }
+
+    def to_model_params(self, inf_params: InfParams) -> ModelParams:
+        return {
+            "sigma_y": self.sigma_tx.to_constrained(inf_params["sigma_y"]),
+            "beta": inf_params["beta"],
+            "alpha": inf_params["alpha"],
         }

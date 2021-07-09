@@ -240,11 +240,15 @@ class LGO(CrossValidationScheme):
         corresponding to the bottom of the model hierarchy.
     """
 
-    def __init__(self, shape: Tuple, group_identifiers: Iterable[int]) -> None:
-        """ """
+    def __init__(self, shape: Tuple, group_ids: Iterable[int]) -> None:
+        """Create LGO instance
+
+        :param shape: shape of (1D) log likelihood contribution array
+        :param group_ids: group identifiers, of same shape as log likelihood contributions
+        """
         self.shape = shape if isinstance(shape, Sequence) else (shape,)
         assert len(self.shape) == 1, "Only 1D lower level supported"
-        self.ids = list(group_identifiers)
+        self.ids = list(group_ids)
         groups = DefaultDict(list)
         for i, x in enumerate(self.ids):
             groups[x].append(i)

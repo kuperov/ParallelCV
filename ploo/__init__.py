@@ -40,7 +40,7 @@ Class diagram, like it's 2005::
         │ + summary_array()     │
         │                       │
         └▲──────▲────────▲─────▲┘
-         │      │        │     │
+         │      │inherit │     │
          │      │        │     │
     ┌────┴┐ ┌───┴─┐ ┌────┴──┐ ┌┴────┐
     │ LOO │ │ LFO │ │ KFold │ │ LGO │
@@ -54,4 +54,3 @@ from .cv import LFO, LGO, LOO, KFold
 from .hmc import WarmupResults, warmup
 from .model import Model
 from .transforms import IntervalTransform, LogTransform
-from .util import DummyProgress, Progress

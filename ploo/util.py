@@ -18,17 +18,3 @@ class Timer:
 
     def __str__(self):
         return f"{self.sec:1.01f} sec"
-
-
-class Progress:
-    """Prints messages to console as needed."""
-
-    def print(self, msg):
-        print(msg)
-
-
-class DummyProgress(Progress):
-    """Silent progress indicator. Doesn't output anything."""
-
-    def print(self, msg):
-        pass

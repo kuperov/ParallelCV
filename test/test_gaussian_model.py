@@ -12,7 +12,6 @@ import pandas
 from jax import numpy as jnp
 from scipy import stats as st
 
-from ploo import DummyProgress
 from ploo.model import _Posterior
 from ploo.models import GaussianModel
 
@@ -72,10 +71,8 @@ class TestGaussian(unittest.TestCase):
             warmup_steps=800,
             chains=4,
             seed=42,
-            out=DummyProgress(),
         )
         self.assertIsInstance(post, _Posterior)
-        self.assertEqual(post.seed, 42)
         self.assertIs(gauss, post.model)
         p0 = next(iter(gauss.parameters()))
         self.assertEqual(post.post_draws[p0].shape, (4, 1000))

@@ -6,10 +6,11 @@ Alex Cooper <alex@acooper.org>
 This module defines a model class that users can extend to implement
 arbitrary likelihood models.
 """
-from typing import Any, Callable, Dict, Iterable, Tuple, Union
+from typing import Any, Dict, Iterable, Tuple, Union
 
 import arviz as az
 import chex
+import jax
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
@@ -28,7 +29,7 @@ from .hmc import (
     warmup,
 )
 from .statistics import ess, split_rhat
-from .util import Progress, Timer
+from .util import Timer
 
 # model parameters are in a constrained coordinate space
 ModelParams = Dict[str, chex.ArrayDevice]
@@ -41,6 +42,44 @@ _ARVIZ_OTHER = ["summary", "ess", "loo"]
 _ARVIZ_METHODS = _ARVIZ_PLOT + _ARVIZ_OTHER
 
 
+def _print_devices():
+    """Print summary of available devices to console."""
+    device_list = [f"{d.device_kind} ({d.platform}{d.id})" for d in jax.devices()]
+    if len(device_list) > 0:
+        print(f'Detected devices: {", ".join(device_list)}')
+    else:
+        print("Only CPU is available. Check cuda/cudnn library versions.")
+
+
+def _to_posterior_dict(post_draws):
+    """Construct xarrays for ArviZ
+
+    Converts all objects to in-memory numpy arrays. This involves a lot of copying,
+    of course, but ArviZ chokes if given jax.numpy arrays.
+
+    :param post_draws: dict of posterior draws, keyed by parameter name
+    :returns: xarray dataset suitable for passing to az.InferenceData
+    """
+    first_param = next(iter(post_draws))
+    chains = post_draws[first_param].shape[0]
+    draws = post_draws[first_param].shape[1]
+    post_draw_map = {}
+    coords = {  # gets updated for
+        "chain": (["chain"], np.arange(chains)),
+        "draw": (["draw"], np.arange(draws)),
+    }
+    for var, drws in post_draws.items():
+        # dimensions are chain, draw number, variable dim 0, variable dim 1, ...
+        extra_dims = [(f"{var}{i}", length) for i, length in enumerate(drws.shape[2:])]
+        keys = ["chain", "draw"] + [n for n, len in extra_dims]
+        post_draw_map[var] = (keys, np.asarray(drws))
+        for dimname, length in extra_dims:
+            coords[dimname] = ([dimname], np.arange(length))
+
+    posterior = xr.Dataset(post_draw_map, coords=coords)
+    return posterior
+
+
 class _Posterior(az.InferenceData):
     """ploo posterior: captures full-data and loo results
 
@@ -51,55 +90,51 @@ class _Posterior(az.InferenceData):
         model:       Model instance this was created from
         post_draws:  map of posterior draw arrays, keyed by variable, with axes
                      (chain, draw, variable_axis0, ...)
-        cv_draws:    cross-validation draws
-        seed:        seed used when invoking inference
-        chains:      number of chains per CV posterior
         warmup_res:  results from warmup
         accumulator: accumulator state object from inference routine
         rng_key:     random number generator state
-        write:       function for writing output to the console
     """
 
     def __init__(
         self,
         model: "Model",
         post_draws: Dict[str, chex.ArrayDevice],
-        seed: int,
-        chains: int,
-        draws: int,
         warmup_res: WarmupResults,
         accumulator: CrossValidationState,
         rng_key: chex.ArrayDevice,
-        write: Callable,
     ) -> None:
         self.model = model
         self.post_draws = post_draws
-        self.seed = seed
-        self.chains = chains
-        self.draws = draws
+        first_param = next(iter(post_draws))
+        self.chains = post_draws[first_param].shape[0]
+        self.draws = post_draws[first_param].shape[1]
         self.warmup_res = warmup_res
         self.rng_key = rng_key
-        self.write = write
-        self.chain_divergences = accumulator.divergence_count
-        self.total_divergences = jnp.sum(accumulator.divergence_count)
-        # construct xarrays for ArviZ
-        post_draw_map = {}
-        coords = {  # gets updated for
-            "chain": (["chain"], jnp.arange(self.chains)),
-            "draw": (["draw"], jnp.arange(self.draws)),
-        }
-        for var, drws in self.post_draws.items():
-            # dimensions are chain, draw number, variable dim 0, variable dim 1, ...
-            extra_dims = [
-                (f"{var}{i}", length) for i, length in enumerate(drws.shape[2:])
-            ]
-            keys = ["chain", "draw"] + [n for n, len in extra_dims]
-            post_draw_map[var] = (keys, drws)
-            for dimname, length in extra_dims:
-                coords[dimname] = ([dimname], jnp.arange(length))
-
-        posterior = xr.Dataset(post_draw_map, coords=coords)
+        self.accumulator = accumulator
+        posterior = _to_posterior_dict(self.post_draws)
         super().__init__(posterior=posterior)
+
+    @property
+    def chain_divergences(self) -> int:
+        """Divergence count by chain"""
+        return self.accumulator.divergence_count
+
+    @property
+    def total_divergences(self) -> int:
+        """Total number of divergences, summed across chains"""
+        return jnp.sum(self.accumulator.divergence_count)
+
+    @property
+    def avg_acceptance_rate(self) -> float:
+        """Average acceptance rate across all chains, as proportion in [0,1]"""
+        return float(
+            jnp.sum(self.accumulator.accepted_count) / self.chains / self.draws
+        )
+
+    @property
+    def acceptance_rates(self) -> float:
+        """Acceptance rate by chains, as proportion in [0,1]"""
+        return self.accumulator.accepted_count / self.draws
 
     def __str__(self) -> str:
         title = f"{self.model.name} inference summary"
@@ -109,9 +144,9 @@ class _Posterior(az.InferenceData):
             title,
             "=" * len(title),
             "",
-            f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} "
-            f"chains with seed {self.seed}",
-            "",
+            f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} chains",
+            f"{self.total_divergences} divergences, "
+            f"{self.avg_acceptance_rate*100}% acceptance rate",
         ] + [self._post_table()]
         return "\n".join(desc_rows)
 
@@ -146,19 +181,23 @@ class _Posterior(az.InferenceData):
 
     def cross_validate(
         self,
-        cv_type: Union[str, CrossValidationScheme] = "LOO",
+        cv_scheme: Union[str, CrossValidationScheme] = "LOO",
+        retain_draws=False,
         rng_key: chex.ArrayDevice = None,
         **kwargs,
     ) -> "CrossValidation":
         """Run cross-validation for this posterior.
 
         Number of chains and draws per chain are the same as the original inference
-        procedure.
+        procedure. Only enable the `retain_draws` flag if you are sure you have enough
+        memory on your GPU. Even moderately-sized problems can exhaust a GPU's memory
+        quite quickly.
 
         Args:
-            cv_scheme: name of cross-validation scheme to apply
-            rng_key:   random generator state
-            kwargs:    arguments to pass to cross-validation scheme constructor
+            cv_scheme:    name of cross-validation scheme to apply
+            retain_draws: if true, retain MCMC draws
+            rng_key:      random generator state
+            kwargs:       arguments to pass to cross-validation scheme constructor
 
         Returns:
             CrossValidation object containing all CV posteriors
@@ -167,9 +206,10 @@ class _Posterior(az.InferenceData):
         timer = Timer()
         # shape from a likelihood evaluation: wasteful but prevents mistakes
         cv_shape = self.model.log_likelihood(self.model.initial_value()).shape
-        cv_scheme = cv_factory(cv_type)(shape=cv_shape, **kwargs)
+        if isinstance(cv_scheme, str):
+            cv_scheme = cv_factory(cv_scheme)(shape=cv_shape, **kwargs)
         cv_chains = self.chains * cv_scheme.cv_folds()
-        self.write(
+        print(
             f"Cross-validation with {cv_scheme.cv_folds():,} folds "
             f"using {cv_chains:,} chains..."
         )
@@ -191,20 +231,24 @@ class _Posterior(az.InferenceData):
             self.draws,
             self.chains,
             rng_key,
+            retain_draws,
         )
-        self.write(
+        print(
             f"      {cv_chains*self.draws:,} HMC draws took {timer}"
             f" ({cv_chains*self.draws/timer.sec:,.0f} iter/sec)."
         )
 
-        # map positions back to model coordinates
-        # NB: if we can evaluate objective online, this will not be necessary
-        position_model = vmap(self.model.to_model_params)(states.position)
-        # want axes to be (chain, draws, ... <variable dims> ...)
-        rearranged_draws = {
-            var: jnp.swapaxes(draws, axis1=0, axis2=1)
-            for (var, draws) in position_model.items()
-        }
+        if retain_draws:
+            # map positions back to model coordinates
+            # NB: if we can evaluate objective online, this will not be necessary
+            position_model = vmap(self.model.to_model_params)(states)
+            # want axes to be (chain, draws, ... <variable dims> ...)
+            rearranged_draws = {
+                var: jnp.swapaxes(draws, axis1=0, axis2=1)
+                for (var, draws) in position_model.items()
+            }
+        else:
+            rearranged_draws = None
 
         return CrossValidation(self, accumulator, rearranged_draws, scheme=cv_scheme)
 
@@ -273,37 +317,41 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
 
     @property
     def draws(self) -> int:
+        """Number of draws per chain"""
         return self.post.draws
 
     @property
     def chains(self) -> int:
+        """Number of chains per CV fold"""
         return self.post.chains
+
+    @property
+    def folds(self) -> int:
+        """Number of CV folds in this CV scheme"""
+        return self.scheme.cv_folds()
 
     def __lt__(self, cv):
         return self.elpd.__gt__(cv.elpd)  # note change of sign, want largest first
 
-    def arviz(self, cv_fold):
+    def arviz(self, cv_fold: int) -> az.InferenceData:
         """Retrieves ArviZ :class:`az.InferenceData` object for a CV fold
 
-        Keyword arguments
-            cv_fold: index of CV fold corresponding to desired posterior
+        :param cv_fold: index of CV fold corresponding to desired posterior
+        :raise Exception: if draws were not retained, we can't analyze them
+        :return: an ArviZ object
+        :rtype: arviz.InferenceData
         """
+        if not self.states:
+            raise Exception("States not retained. Cannot construct ArviZ object.")
         fold_indexes = jnp.arange(self.scheme.cv_folds())
         chain_folds = jnp.repeat(fold_indexes, self.chains)
         chain_i = chain_folds == cv_fold
         if not jnp.sum(chain_i):
             raise Exception("No chains match CV fold {self.cv_fold}")
-        posterior = xr.Dataset(
-            {
-                var: (["chain", "draw"], jnp.compress(chain_i, drws, axis=0))
-                for var, drws in self.states.items()
-            },
-            coords={
-                "chain": (["chain"], jnp.arange(self.chains)),
-                "draw": (["draw"], jnp.arange(self.draws)),
-            },
-        )
-        return az.InferenceData(posterior=posterior)
+        draw_subset = {
+            var: np.compress(chain_i, drw, axis=0) for (var, drw) in self.states.items()
+        }
+        return az.InferenceData(posterior=_to_posterior_dict(draw_subset))
 
     @property
     def divergences(self):
@@ -396,19 +444,9 @@ class Model:
 
         JAX needs to be able to trace this function.
 
-        Note: future versions of this function won't take cv_fold as a
-        parameter. But we haven't yet built the CV abstraction. Future
-        version will return log likelihood contributions contributions
-        { log p(yᵢ|θ): i=1,2,⋯,n }, as a 1- or 2-dimensional array.
-        The shape of the array corresponds to the shape of the model's
-        dependence structure, or a 1-dimensional array if data are iid.
-
-        Args:
-            params:  dict of model parameters, in constrained (model)
-                     parameter space
-
-        Returns:
-            log likelihood at the given parameters for the given CV fold
+        :param model_params: dict of model parameters, in constrained (model)
+                             parameter space
+        :return: log likelihood at the given parameters for the given CV fold
         """
         raise NotImplementedError()
 
@@ -417,9 +455,8 @@ class Model:
 
         JAX needs to be able to trace this function.
 
-        Args:
-            params: dict of model parameters in constrained (model)
-                    parameter space
+        :param model_params: dict of model parameters in constrained (model)
+                             parameter space
         """
         raise NotImplementedError()
 
@@ -544,7 +581,6 @@ class Model:
         warmup_steps: int = 500,
         chains: int = 8,
         seed: int = 42,
-        out: Progress = None,
         warmup_results: WarmupResults = None,
     ) -> _Posterior:
         """Run HMC with full dataset, tuned by Stan+NUTS warmup
@@ -554,17 +590,18 @@ class Model:
             warmup_steps:   number of Stan warmup steps to run
             chains:         number of chains for main inference step
             seed:           random seed
-            out:            progress indicator
             warmup_results: use this instead of running warmup
         """
-        write = (out or Progress()).print
         rng_key = random.PRNGKey(seed)
         warmup_key, inference_key, post_key = random.split(rng_key, 3)
-
+        draws, warmup_steps = int(draws), int(warmup_steps)
+        print("Full-data posterior inference")
+        print("=============================")
+        _print_devices()
         if warmup_results:
-            write("Skipping warmup")
+            print("Skipping warmup")
         else:
-            write("Starting Stan warmup using NUTS...")
+            print("Starting Stan warmup using NUTS...")
             timer = Timer()
             warmup_results = warmup(
                 self.potential,
@@ -573,12 +610,16 @@ class Model:
                 chains,
                 warmup_key,
             )
-            write(
-                f"      {warmup_steps} warmup draws took {timer}"
+            print(
+                f"      {warmup_steps:,} warmup draws took {timer}"
                 f" ({warmup_steps/timer.sec:.1f} iter/sec)."
             )
+            print(
+                f"      Step size {warmup_results.step_size:.4f}, "
+                f"integration length {warmup_results.int_steps} steps."
+            )
 
-        write(
+        print(
             f"HMC for {draws*chains:,} full-data draws "
             f"({chains} chains, {draws:,} draws per chain)..."
         )
@@ -588,7 +629,9 @@ class Model:
         )
         divergent_chains = jnp.sum(accum.divergence_count > 0)
         if divergent_chains > 0:
-            write(f"      WARNING: {divergent_chains} divergent chain(s).")
+            print(f"      WARNING: {divergent_chains} divergent chain(s).")
+        accept_rate_pc = float(100 * jnp.mean(accum.accepted_count) / draws)
+        print(f"      Average HMC acceptance rate {accept_rate_pc:.1f}%.")
         # map positions back to model coordinates
         position_model = vmap(self.to_model_params)(states.position)
         # want axes to be (chain, draws, ... <variable dims> ...)
@@ -596,7 +639,7 @@ class Model:
             var: jnp.swapaxes(draws, axis1=0, axis2=1)
             for (var, draws) in position_model.items()
         }
-        write(
+        print(
             f"      {chains*draws:,} HMC draws took {timer}"
             f" ({chains*draws/timer.sec:,.0f} iter/sec)."
         )
@@ -604,11 +647,7 @@ class Model:
         return _Posterior(
             self,
             post_draws=rearranged_positions,
-            seed=seed,
-            chains=chains,
-            draws=draws,
             warmup_res=warmup_results,
             accumulator=accum,
             rng_key=post_key,
-            write=write,
         )

@@ -6,3 +6,4 @@ ploo.egg-info
 *.nogit
 build
 notebooks/Untitled*ipynb
+ploo/models/*_data*
