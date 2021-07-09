@@ -13,6 +13,7 @@ import chex
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from jax import devices
 from jax import numpy as jnp
 from jax import random, vmap
 from scipy import stats as sst
@@ -39,6 +40,15 @@ CVFold = Union[int, Tuple[int, int]]
 _ARVIZ_PLOT = [name for name in dir(az) if name.startswith("plot_")]
 _ARVIZ_OTHER = ["summary", "ess", "loo"]
 _ARVIZ_METHODS = _ARVIZ_PLOT + _ARVIZ_OTHER
+
+
+def _print_devices():
+    """Print summary of available devices to console."""
+    device_list = [f"{d.device_kind} ({d.platform}{d.id})" for d in devices()]
+    if len(device_list) > 0:
+        print(f'Detected devices: {", ".join(device_list)}')
+    else:
+        print("Only CPU is available. Check cuda/cudnn library versions.")
 
 
 class _Posterior(az.InferenceData):
@@ -71,8 +81,7 @@ class _Posterior(az.InferenceData):
         self.draws = post_draws[first_param].shape[1]
         self.warmup_res = warmup_res
         self.rng_key = rng_key
-        self.chain_divergences = accumulator.divergence_count
-        self.total_divergences = jnp.sum(accumulator.divergence_count)
+        self.accumulator = accumulator
         # construct xarrays for ArviZ
         post_draw_map = {}
         coords = {  # gets updated for
@@ -92,6 +101,28 @@ class _Posterior(az.InferenceData):
         posterior = xr.Dataset(post_draw_map, coords=coords)
         super().__init__(posterior=posterior)
 
+    @property
+    def chain_divergences(self) -> int:
+        """Divergence count by chain"""
+        return self.accumulator.divergence_count
+
+    @property
+    def total_divergences(self) -> int:
+        """Total number of divergences, summed across chains"""
+        return jnp.sum(self.accumulator.divergence_count)
+
+    @property
+    def avg_acceptance_rate(self) -> float:
+        """Average acceptance rate across all chains, as proportion in [0,1]"""
+        return float(
+            jnp.sum(self.accumulator.accepted_count) / self.chains / self.draws
+        )
+
+    @property
+    def acceptance_rates(self) -> float:
+        """Acceptance rate by chains, as proportion in [0,1]"""
+        return self.accumulator.accepted_count / self.draws
+
     def __str__(self) -> str:
         title = f"{self.model.name} inference summary"
         arg0 = next(iter(self.post_draws))
@@ -100,7 +131,8 @@ class _Posterior(az.InferenceData):
             title,
             "=" * len(title),
             "",
-            f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} chains" "",
+            f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} chains",
+            f"{self.total_divergences} divergences, {self.avg_acceptance_rate*100}% acceptance rate",
         ] + [self._post_table()]
         return "\n".join(desc_rows)
 
@@ -546,7 +578,10 @@ class Model:
         """
         rng_key = random.PRNGKey(seed)
         warmup_key, inference_key, post_key = random.split(rng_key, 3)
-
+        draws, warmup_steps = int(draws), int(warmup_steps)
+        print("Full-data posterior inference")
+        print("=============================")
+        _print_devices()
         if warmup_results:
             print("Skipping warmup")
         else:
@@ -563,6 +598,10 @@ class Model:
                 f"      {warmup_steps} warmup draws took {timer}"
                 f" ({warmup_steps/timer.sec:.1f} iter/sec)."
             )
+            print(
+                f"      Step size {warmup_results.step_size:.4f}, "
+                f"integration length {warmup_results.int_steps} steps."
+            )
 
         print(
             f"HMC for {draws*chains:,} full-data draws "
@@ -575,6 +614,8 @@ class Model:
         divergent_chains = jnp.sum(accum.divergence_count > 0)
         if divergent_chains > 0:
             print(f"      WARNING: {divergent_chains} divergent chain(s).")
+        accept_rate_pc = float(100 * jnp.mean(accum.accepted_count) / draws)
+        print(f"      Average HMC acceptance rate {accept_rate_pc:.1f}%.")
         # map positions back to model coordinates
         position_model = vmap(self.to_model_params)(states.position)
         # want axes to be (chain, draws, ... <variable dims> ...)

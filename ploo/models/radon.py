@@ -18,7 +18,9 @@ import requests
 from jax import numpy as jnp
 
 from ploo import Model
+from ploo.hmc import InfParams
 from ploo.model import ModelParams
+from ploo.transforms import LogTransform
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "radon_data")
 _DATA_FILE = os.path.join(_DATA_DIR, "radon_all.json")
@@ -49,7 +51,7 @@ def _load_data() -> Dict[str, chex.ArrayDevice]:
         data = json.load(data_file)
     N, J = data["N"], data["J"]
     log_radon = jnp.array(data["log_radon"])
-    county_index = jnp.array(data["county_idx"])
+    county_index = jnp.array(data["county_idx"]) - 1  # zero-based
     floor_measure = jnp.array(data["floor_measure"])
     assert county_index.shape == (N,) and jnp.max(county_index) == J
     assert floor_measure.shape == (N,)
@@ -68,6 +70,8 @@ class RadonCountyIntercept(Model):
 
     .. _[1]: https://github.com/stan-dev/posteriordb/blob/master/posterior_database/models/stan/radon_county_intercept.stan
     """  # noqa: B950  # pylint: disable=line-too-long
+
+    sigma_tx = LogTransform()
 
     def __init__(self) -> None:
         """Creates radon county intercept model
@@ -110,4 +114,18 @@ class RadonCountyIntercept(Model):
             "sigma_y": jnp.array(1.0),
             "beta": jnp.array(0.0),
             "alpha": jnp.array([0.0] * self.J),
+        }
+
+    def to_inference_params(self, model_params: ModelParams) -> InfParams:
+        return {
+            "sigma_y": self.sigma_tx.to_unconstrained(model_params["sigma_y"]),
+            "beta": model_params["beta"],
+            "alpha": model_params["alpha"],
+        }
+
+    def to_model_params(self, inf_params: InfParams) -> ModelParams:
+        return {
+            "sigma_y": self.sigma_tx.to_constrained(inf_params["sigma_y"]),
+            "beta": inf_params["beta"],
+            "alpha": inf_params["alpha"],
         }
