@@ -150,4 +150,4 @@ class RadonCountyIntercept(Model):
         }
 
     def log_det(self, model_params: ModelParams) -> chex.ArrayDevice:
-        return self.sigma_tx.log_det(model_params['sigma_y'])
+        return self.sigma_tx.log_det(model_params["sigma_y"])

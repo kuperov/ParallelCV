@@ -233,6 +233,10 @@ class _Posterior(az.InferenceData):
             rng_key,
             retain_draws,
         )
+        accumulator.divergence_count.block_until_ready()
+        divergent_chains = jnp.sum(accumulator.divergence_count > 0)
+        if divergent_chains > 0:
+            print(f"      WARNING: {divergent_chains} divergent chain(s).")
         print(
             f"      {cv_chains*self.draws:,} HMC draws took {timer}"
             f" ({cv_chains*self.draws/timer.sec:,.0f} iter/sec)."
