@@ -40,7 +40,7 @@ Class diagram, like it's 2005::
         │ + summary_array()     │
         │                       │
         └▲──────▲────────▲─────▲┘
-         │      │        │     │
+         │      │inherit │     │
          │      │        │     │
     ┌────┴┐ ┌───┴─┐ ┌────┴──┐ ┌┴────┐
     │ LOO │ │ LFO │ │ KFold │ │ LGO │
