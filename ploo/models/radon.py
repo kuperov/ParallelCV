@@ -64,7 +64,23 @@ def _load_data() -> Dict[str, chex.ArrayDevice]:
 
 
 class RadonCountyIntercept(Model):
-    """Radon county intercept model from posterior db [1]_
+    r"""Radon county intercept model from posterior db [1]_
+
+    The version of the radon model we are using models a level of radon
+    :math:`r_i` with a random county :math:`c_i` effect :math`\alpha_{c_i}`
+    and slope :math:`\beta` for explanatory variable "floor measure" :math:`f_i`.
+
+    .. math::
+
+        \log(r_i) \sim \mathcal{N}\left(\alpha_{c_i} + \beta f_i, \sigma_y^2 \right)
+
+    with priors
+
+    .. math::
+
+        \sigma_y \sim \mathcal{N}\left(0, 1 \right) \qquad
+        \alpha \sim \mathcal{N}\left(0, 10^2 \right) \qquad
+        \beta \sim \mathcal{N}\left(0, 10^2 \right)
 
     .. _[1]: https://github.com/stan-dev/posteriordb/blob/master/posterior_database/models/stan/radon_county_intercept.stan
     """  # noqa: B950  # pylint: disable=line-too-long
@@ -79,7 +95,7 @@ class RadonCountyIntercept(Model):
         self.N = data["N"]
         self.J = data["J"]
         self.log_radon = data["log_radon"]
-        self.county_index = data["county_index"]
+        self.county_index = data["county_index"] - 1  # zero-indexed python
         self.floor_measure = data["floor_measure"]
 
     def log_likelihood(self, model_params: ModelParams) -> chex.ArrayDevice:
