@@ -99,7 +99,7 @@ class RadonCountyIntercept(Model):
         self.N = data["N"]
         self.J = data["J"]
         self.log_radon = data["log_radon"]
-        self.county_index = data["county_index"] - 1  # zero-indexed python
+        self.county_index = data["county_index"]
         self.floor_measure = data["floor_measure"]
 
     def log_likelihood(self, model_params: ModelParams) -> chex.ArrayDevice:
@@ -148,3 +148,6 @@ class RadonCountyIntercept(Model):
             "beta": inf_params["beta"],
             "alpha": inf_params["alpha"],
         }
+
+    def log_det(self, model_params: ModelParams) -> chex.ArrayDevice:
+        return self.sigma_tx.log_det(model_params['sigma_y'])
