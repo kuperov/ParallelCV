@@ -71,11 +71,26 @@ class TestInference(unittest.TestCase):
             cv_cond_pred=self.gauss.log_cond_pred,
             warmup_res=self.warmup,
             cv_folds=self.gauss.cv_folds(),
-            draws=1e3,
+            draws=200,
             chains=2,
             rng_key=self.rng_key,
+            retain_draws=True,
         )
         self.assertIsNotNone(states)
+        self.assertIsNotNone(accumulator)
+
+        accumulator, states = cross_validate(
+            cv_potential=self.gauss.cv_potential,
+            cv_cond_pred=self.gauss.log_cond_pred,
+            warmup_res=self.warmup,
+            cv_folds=self.gauss.cv_folds(),
+            draws=200,
+            chains=2,
+            rng_key=self.rng_key,
+            retain_draws=False,
+        )
+        self.assertIsNone(states)
+        self.assertIsNotNone(accumulator)
 
 
 if __name__ == "__main__":

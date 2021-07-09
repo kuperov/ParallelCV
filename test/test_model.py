@@ -134,9 +134,10 @@ class TestComparisons(unittest.TestCase):
     """Does model selection via cross-validation work?"""
 
     def test_compare_elpd(self):
-        """Check cross-validation for one posterior, and model selection
+        """Check cross-validation for model selection
 
-        All in one big test so we only have to run one set of cross-validations
+        All in one big test so we only have to run one set of cross-validations.
+        We aren't retaining draws here, just using the accumulated elpd.
         """
         gen_key = jax.random.PRNGKey(seed=42)
         y = _GaussianVarianceModel.generate(N=50, mean=0, sigma_sq=10, rng_key=gen_key)
@@ -155,11 +156,6 @@ class TestComparisons(unittest.TestCase):
         cv_2 = post_2.cross_validate()
         chex.clear_trace_counter()
         cv_3 = post_3.cross_validate()
-        # check just CV posterior m1
-        m1_av_f0 = cv_1.arviz(cv_fold=0)
-        self.assertIsInstance(m1_av_f0, InferenceData)
-        m1_av_f1 = cv_1.arviz(cv_fold=1)
-        self.assertIsInstance(m1_av_f1, InferenceData)
         # check comparisons across CVs
         cmp_res = compare(cv_1, cv_2, cv_3)
         self.assertEqual(cmp_res.names(), ["model0", "model1", "model2"])
@@ -171,6 +167,18 @@ class TestComparisons(unittest.TestCase):
             self.assertIn(m, repr(cmp_res))
         self.assertIs(cmp_res[0], cv_1)
         self.assertIs(cmp_res["model0"], cv_1)
+
+    def test_one_cv(self):
+        """Check a single cross-validation object, retaining draws"""
+        gen_key = jax.random.PRNGKey(seed=42)
+        y = _GaussianVarianceModel.generate(N=50, mean=0, sigma_sq=10, rng_key=gen_key)
+        model_1 = _GaussianVarianceModel(y, mean=0.0)
+        post_1 = model_1.inference(draws=1e3, chains=4)
+        cv_1 = post_1.cross_validate(retain_draws=True)
+        m1_av_f0 = cv_1.arviz(cv_fold=0)
+        self.assertIsInstance(m1_av_f0, InferenceData)
+        m1_av_f1 = cv_1.arviz(cv_fold=1)
+        self.assertIsInstance(m1_av_f1, InferenceData)
 
 
 if __name__ == "__main__":

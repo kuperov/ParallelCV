@@ -242,6 +242,7 @@ def cross_validate(
     draws: int,
     chains: int,
     rng_key: jnp.DeviceArray,
+    retain_draws: bool = False,
 ) -> CVHMCState:
     """Cross validation step.
 
@@ -287,28 +288,70 @@ def cross_validate(
         cv_potential, warmup_res.step_size, warmup_res.mass_matrix, warmup_res.int_steps
     )
 
-    # each step operates vector of states (representing a cross-section across chains)
-    # and vector of rng keys, one per draw
-    def one_step(
-        cv_state: CrossValidationState, rng_subkey: jnp.DeviceArray
-    ) -> Tuple[CrossValidationState, CVHMCState]:
-        keys = random.split(rng_subkey, chains * cv_folds)
-        hmc_state, hmc_info = vmap(kernel)(keys, cv_state.hmc_state)
-        cond_pred = vmap(cv_cond_pred)(hmc_state.position, hmc_state.cv_fold)
-        updated_state = CrossValidationState(
-            divergence_count=cv_state.divergence_count
-            + jnp.where(hmc_info.is_divergent, 1, 0),
-            accepted_count=cv_state.accepted_count
-            + jnp.where(hmc_info.is_accepted, 1, 0),
-            sum_log_pred_dens=cv_state.sum_log_pred_dens + cond_pred,
-            hmc_state=hmc_state,
-        )
-        return updated_state, hmc_state  # (accumulated state, iteration state)
+    if retain_draws:
 
-    draw_keys = random.split(rng_key, draws)
-    accumulator, states = lax.scan(one_step, cv_initial_accumulator, draw_keys)
+        @jax.jit
+        def do_cv():
+            # each step operates vector of states (representing a cross-section across chains)
+            # and vector of rng keys, one per draw
+            def one_step(
+                cv_state: CrossValidationState, rng_subkey: jnp.DeviceArray
+            ) -> Tuple[CrossValidationState, CVHMCState]:
+                keys = random.split(rng_subkey, chains * cv_folds)
+                hmc_state, hmc_info = vmap(kernel)(keys, cv_state.hmc_state)
+                cond_pred = vmap(cv_cond_pred)(hmc_state.position, hmc_state.cv_fold)
+                div_count = cv_state.divergence_count + jnp.where(
+                    hmc_info.is_divergent, 1, 0
+                )
+                accept_count = cv_state.accepted_count + jnp.where(
+                    hmc_info.is_accepted, 1, 0
+                )
+                updated_state = CrossValidationState(
+                    divergence_count=div_count,
+                    accepted_count=accept_count,
+                    sum_log_pred_dens=cv_state.sum_log_pred_dens + cond_pred,
+                    hmc_state=hmc_state,
+                )
+                return updated_state, hmc_state.position
 
-    return accumulator, states
+            draw_keys = random.split(rng_key, draws)
+            accumulator, positions = lax.scan(
+                one_step, cv_initial_accumulator, draw_keys
+            )
+            return accumulator, positions
+
+    else:
+
+        @jax.jit
+        def do_cv():
+            # each step operates vector of states (representing a cross-section across chains)
+            # and vector of rng keys, one per draw
+            def one_step(
+                cv_state: CrossValidationState, rng_subkey: jnp.DeviceArray
+            ) -> Tuple[CrossValidationState, CVHMCState]:
+                keys = random.split(rng_subkey, chains * cv_folds)
+                hmc_state, hmc_info = vmap(kernel)(keys, cv_state.hmc_state)
+                cond_pred = vmap(cv_cond_pred)(hmc_state.position, hmc_state.cv_fold)
+                div_count = cv_state.divergence_count + jnp.where(
+                    hmc_info.is_divergent, 1, 0
+                )
+                accept_count = cv_state.accepted_count + jnp.where(
+                    hmc_info.is_accepted, 1, 0
+                )
+                updated_state = CrossValidationState(
+                    divergence_count=div_count,
+                    accepted_count=accept_count,
+                    sum_log_pred_dens=cv_state.sum_log_pred_dens + cond_pred,
+                    hmc_state=hmc_state,
+                )
+                return updated_state, None
+
+            draw_keys = random.split(rng_key, draws)
+            accumulator, _ = lax.scan(one_step, cv_initial_accumulator, draw_keys)
+            return accumulator, None
+
+    accumulator, positions = do_cv()
+    return accumulator, positions
 
 
 def new_cv_state(position: PyTree, potential_fn: Callable, cv_fold: int) -> CVHMCState:
@@ -446,7 +489,7 @@ def cv_kernel(
         divergence_threshold,
     )
 
-    @jax.jit
+    # @jax.jit
     # @chex.assert_max_traces(n=1)
     def kernel(
         rng_key: jnp.ndarray, state: CVHMCState

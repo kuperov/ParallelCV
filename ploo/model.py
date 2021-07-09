@@ -10,10 +10,10 @@ from typing import Any, Dict, Iterable, Tuple, Union
 
 import arviz as az
 import chex
+import jax
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from jax import devices
 from jax import numpy as jnp
 from jax import random, vmap
 from scipy import stats as sst
@@ -44,7 +44,7 @@ _ARVIZ_METHODS = _ARVIZ_PLOT + _ARVIZ_OTHER
 
 def _print_devices():
     """Print summary of available devices to console."""
-    device_list = [f"{d.device_kind} ({d.platform}{d.id})" for d in devices()]
+    device_list = [f"{d.device_kind} ({d.platform}{d.id})" for d in jax.devices()]
     if len(device_list) > 0:
         print(f'Detected devices: {", ".join(device_list)}')
     else:
@@ -169,18 +169,22 @@ class _Posterior(az.InferenceData):
     def cross_validate(
         self,
         cv_scheme: Union[str, CrossValidationScheme] = "LOO",
+        retain_draws=False,
         rng_key: chex.ArrayDevice = None,
         **kwargs,
     ) -> "CrossValidation":
         """Run cross-validation for this posterior.
 
         Number of chains and draws per chain are the same as the original inference
-        procedure.
+        procedure. Only enable the `retain_draws` flag if you are sure you have enough
+        memory on your GPU. Even moderately-sized problems can exhaust a GPU's memory
+        quite quickly.
 
         Args:
-            cv_scheme: name of cross-validation scheme to apply
-            rng_key:   random generator state
-            kwargs:    arguments to pass to cross-validation scheme constructor
+            cv_scheme:    name of cross-validation scheme to apply
+            retain_draws: if true, retain MCMC draws
+            rng_key:      random generator state
+            kwargs:       arguments to pass to cross-validation scheme constructor
 
         Returns:
             CrossValidation object containing all CV posteriors
@@ -214,20 +218,24 @@ class _Posterior(az.InferenceData):
             self.draws,
             self.chains,
             rng_key,
+            retain_draws,
         )
         print(
             f"      {cv_chains*self.draws:,} HMC draws took {timer}"
             f" ({cv_chains*self.draws/timer.sec:,.0f} iter/sec)."
         )
 
-        # map positions back to model coordinates
-        # NB: if we can evaluate objective online, this will not be necessary
-        position_model = vmap(self.model.to_model_params)(states.position)
-        # want axes to be (chain, draws, ... <variable dims> ...)
-        rearranged_draws = {
-            var: jnp.swapaxes(draws, axis1=0, axis2=1)
-            for (var, draws) in position_model.items()
-        }
+        if retain_draws:
+            # map positions back to model coordinates
+            # NB: if we can evaluate objective online, this will not be necessary
+            position_model = vmap(self.model.to_model_params)(states)
+            # want axes to be (chain, draws, ... <variable dims> ...)
+            rearranged_draws = {
+                var: jnp.swapaxes(draws, axis1=0, axis2=1)
+                for (var, draws) in position_model.items()
+            }
+        else:
+            rearranged_draws = None
 
         return CrossValidation(self, accumulator, rearranged_draws, scheme=cv_scheme)
 
@@ -308,9 +316,12 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
     def arviz(self, cv_fold):
         """Retrieves ArviZ :class:`az.InferenceData` object for a CV fold
 
-        Keyword arguments
-            cv_fold: index of CV fold corresponding to desired posterior
+        :param cv_fold: index of CV fold corresponding to desired posterior
+
+        :raise Exception: if draws were not retained, we can't analyze them
         """
+        if not self.states:
+            raise Exception("States not retained. Cannot construct ArviZ object.")
         fold_indexes = jnp.arange(self.scheme.cv_folds())
         chain_folds = jnp.repeat(fold_indexes, self.chains)
         chain_i = chain_folds == cv_fold
