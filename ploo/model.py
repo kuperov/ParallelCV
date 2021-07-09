@@ -132,7 +132,8 @@ class _Posterior(az.InferenceData):
             "=" * len(title),
             "",
             f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} chains",
-            f"{self.total_divergences} divergences, {self.avg_acceptance_rate*100}% acceptance rate",
+            f"{self.total_divergences} divergences, "
+            f"{self.avg_acceptance_rate*100}% acceptance rate",
         ] + [self._post_table()]
         return "\n".join(desc_rows)
 

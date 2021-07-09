@@ -53,7 +53,7 @@ def _load_data() -> Dict[str, chex.ArrayDevice]:
     log_radon = jnp.array(data["log_radon"])
     county_index = jnp.array(data["county_idx"]) - 1  # zero-based
     floor_measure = jnp.array(data["floor_measure"])
-    assert county_index.shape == (N,) and jnp.max(county_index) == J
+    assert county_index.shape == (N,) and jnp.max(county_index) == J - 1
     assert floor_measure.shape == (N,)
     assert log_radon.shape == (N,)
     return {
