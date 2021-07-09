@@ -51,6 +51,35 @@ def _print_devices():
         print("Only CPU is available. Check cuda/cudnn library versions.")
 
 
+def _to_posterior_dict(post_draws):
+    """Construct xarrays for ArviZ
+
+    Converts all objects to in-memory numpy arrays. This involves a lot of copying,
+    of course, but ArviZ chokes if given jax.numpy arrays.
+
+    :param post_draws: dict of posterior draws, keyed by parameter name
+    :returns: xarray dataset suitable for passing to az.InferenceData
+    """
+    first_param = next(iter(post_draws))
+    chains = post_draws[first_param].shape[0]
+    draws = post_draws[first_param].shape[1]
+    post_draw_map = {}
+    coords = {  # gets updated for
+        "chain": (["chain"], np.arange(chains)),
+        "draw": (["draw"], np.arange(draws)),
+    }
+    for var, drws in post_draws.items():
+        # dimensions are chain, draw number, variable dim 0, variable dim 1, ...
+        extra_dims = [(f"{var}{i}", length) for i, length in enumerate(drws.shape[2:])]
+        keys = ["chain", "draw"] + [n for n, len in extra_dims]
+        post_draw_map[var] = (keys, np.asarray(drws))
+        for dimname, length in extra_dims:
+            coords[dimname] = ([dimname], np.arange(length))
+
+    posterior = xr.Dataset(post_draw_map, coords=coords)
+    return posterior
+
+
 class _Posterior(az.InferenceData):
     """ploo posterior: captures full-data and loo results
 
@@ -82,23 +111,7 @@ class _Posterior(az.InferenceData):
         self.warmup_res = warmup_res
         self.rng_key = rng_key
         self.accumulator = accumulator
-        # construct xarrays for ArviZ
-        post_draw_map = {}
-        coords = {  # gets updated for
-            "chain": (["chain"], jnp.arange(self.chains)),
-            "draw": (["draw"], jnp.arange(self.draws)),
-        }
-        for var, drws in self.post_draws.items():
-            # dimensions are chain, draw number, variable dim 0, variable dim 1, ...
-            extra_dims = [
-                (f"{var}{i}", length) for i, length in enumerate(drws.shape[2:])
-            ]
-            keys = ["chain", "draw"] + [n for n, len in extra_dims]
-            post_draw_map[var] = (keys, drws)
-            for dimname, length in extra_dims:
-                coords[dimname] = ([dimname], jnp.arange(length))
-
-        posterior = xr.Dataset(post_draw_map, coords=coords)
+        posterior = _to_posterior_dict(self.post_draws)
         super().__init__(posterior=posterior)
 
     @property
@@ -320,7 +333,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
     def __lt__(self, cv):
         return self.elpd.__gt__(cv.elpd)  # note change of sign, want largest first
 
-    def arviz(self, cv_fold) -> az.InferenceData:
+    def arviz(self, cv_fold: int) -> az.InferenceData:
         """Retrieves ArviZ :class:`az.InferenceData` object for a CV fold
 
         :param cv_fold: index of CV fold corresponding to desired posterior
@@ -335,17 +348,10 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         chain_i = chain_folds == cv_fold
         if not jnp.sum(chain_i):
             raise Exception("No chains match CV fold {self.cv_fold}")
-        posterior = xr.Dataset(
-            {
-                var: (["chain", "draw"], jnp.compress(chain_i, drws, axis=0))
-                for var, drws in self.states.items()
-            },
-            coords={
-                "chain": (["chain"], jnp.arange(self.chains)),
-                "draw": (["draw"], jnp.arange(self.draws)),
-            },
-        )
-        return az.InferenceData(posterior=posterior)
+        draw_subset = {
+            var: np.compress(chain_i, drw, axis=0) for (var, drw) in self.states.items()
+        }
+        return az.InferenceData(posterior=_to_posterior_dict(draw_subset))
 
     @property
     def divergences(self):
@@ -438,19 +444,9 @@ class Model:
 
         JAX needs to be able to trace this function.
 
-        Note: future versions of this function won't take cv_fold as a
-        parameter. But we haven't yet built the CV abstraction. Future
-        version will return log likelihood contributions contributions
-        { log p(yᵢ|θ): i=1,2,⋯,n }, as a 1- or 2-dimensional array.
-        The shape of the array corresponds to the shape of the model's
-        dependence structure, or a 1-dimensional array if data are iid.
-
-        Args:
-            params:  dict of model parameters, in constrained (model)
-                     parameter space
-
-        Returns:
-            log likelihood at the given parameters for the given CV fold
+        :param model_params: dict of model parameters, in constrained (model)
+                             parameter space
+        :return: log likelihood at the given parameters for the given CV fold
         """
         raise NotImplementedError()
 
@@ -459,9 +455,8 @@ class Model:
 
         JAX needs to be able to trace this function.
 
-        Args:
-            params: dict of model parameters in constrained (model)
-                    parameter space
+        :param model_params: dict of model parameters in constrained (model)
+                             parameter space
         """
         raise NotImplementedError()
 
