@@ -189,7 +189,8 @@ class _Posterior(az.InferenceData):
         timer = Timer()
         # shape from a likelihood evaluation: wasteful but prevents mistakes
         cv_shape = self.model.log_likelihood(self.model.initial_value()).shape
-        cv_scheme = cv_factory(cv_type)(shape=cv_shape, **kwargs)
+        if isinstance(cv_type, str):
+            cv_scheme = cv_factory(cv_type)(shape=cv_shape, **kwargs)
         cv_chains = self.chains * cv_scheme.cv_folds()
         print(
             f"Cross-validation with {cv_scheme.cv_folds():,} folds "
