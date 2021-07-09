@@ -113,7 +113,7 @@ class RadonCountyIntercept(Model):
         return {
             "sigma_y": jnp.array(1.0),
             "beta": jnp.array(0.0),
-            "alpha": jnp.array([0.0] * self.J),
+            "alpha": jnp.zeros(shape=(self.J,)),
         }
 
     def to_inference_params(self, model_params: ModelParams) -> InfParams:

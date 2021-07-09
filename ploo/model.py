@@ -191,6 +191,8 @@ class _Posterior(az.InferenceData):
         cv_shape = self.model.log_likelihood(self.model.initial_value()).shape
         if isinstance(cv_type, str):
             cv_scheme = cv_factory(cv_type)(shape=cv_shape, **kwargs)
+        else:
+            cv_scheme = cv_type
         cv_chains = self.chains * cv_scheme.cv_folds()
         print(
             f"Cross-validation with {cv_scheme.cv_folds():,} folds "
