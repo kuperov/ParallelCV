@@ -5,14 +5,16 @@ Alex Cooper <alex@acooper.org>
 """
 import unittest
 from types import FunctionType
+from typing import Tuple
 
 import chex
+import distrax
 import jax
 from arviz.data.inference_data import InferenceData
 from jax import numpy as jnp
 from jax.scipy import stats as st
 
-from ploo import LogTransform, Model, compare
+from ploo import Model, compare
 from ploo.model import InfParams, ModelParams
 
 
@@ -36,22 +38,15 @@ class _GaussianVarianceModel(Model):
         self.mean = mean
         self.prior_shape = prior_shape
         self.prior_rate = prior_rate
-        self.sigma_sq_transform = LogTransform()
+        self.sigma_sq_t = distrax.Lambda(jnp.log)
 
-    def log_likelihood(self, model_params: ModelParams):
+    def log_prior_likelihood(self, model_params: ModelParams):
         sigma = jnp.sqrt(model_params["sigma_sq"])
-        return st.norm.logpdf(self.y, loc=self.mean, scale=sigma)
-
-    def log_prior(self, model_params: ModelParams):
-        return st.gamma.logpdf(
+        lprior = st.gamma.logpdf(
             model_params["sigma_sq"], a=self.prior_shape, scale=1.0 / self.prior_rate
         )
-
-    @classmethod
-    def generate(
-        cls, N: int, mean: float, sigma_sq: float, rng_key: jnp.DeviceArray
-    ) -> jnp.DeviceArray:
-        return mean + jnp.sqrt(sigma_sq) * jax.random.normal(shape=(N,), key=rng_key)
+        llik = st.norm.logpdf(self.y, loc=self.mean, scale=sigma)
+        return lprior, llik
 
     def initial_value(self) -> ModelParams:
         return {"sigma_sq": 1.0}
@@ -61,22 +56,21 @@ class _GaussianVarianceModel(Model):
         lpred = st.norm.logpdf(self.y[coords], loc=self.mean, scale=jnp.sqrt(sigma_sq))
         return jnp.sum(lpred)
 
-    def to_inference_params(self, model_params: ModelParams) -> InfParams:
-        unconstrained = {
-            "sigma_sq": self.sigma_sq_transform.to_unconstrained(
-                model_params["sigma_sq"]
-            )
-        }
-        return unconstrained
+    def forward_transform(self, model_params: ModelParams) -> InfParams:
+        return {"sigma_sq": self.sigma_sq_t.forward(model_params["sigma_sq"])}
 
-    def to_model_params(self, inf_params: InfParams) -> ModelParams:
-        constrained = {
-            "sigma_sq": self.sigma_sq_transform.to_constrained(inf_params["sigma_sq"])
-        }
-        return constrained
+    def inverse_transform_log_det(
+        self, inf_params: InfParams
+    ) -> Tuple[ModelParams, chex.ArrayDevice]:
+        sst, jac = self.sigma_sq_t.inverse_log_det_jacobian(inf_params["sigma_sq"])
+        constrained = {"sigma_sq": sst}
+        return constrained, jac
 
-    def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
-        return self.sigma_sq_transform.log_det(model_params["sigma_sq"])
+    @classmethod
+    def generate(
+        cls, N: int, mean: float, sigma_sq: float, rng_key: jnp.DeviceArray
+    ) -> jnp.DeviceArray:
+        return mean + jnp.sqrt(sigma_sq) * jax.random.normal(shape=(N,), key=rng_key)
 
 
 class TestModelInferenceAndParams(unittest.TestCase):

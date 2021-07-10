@@ -10,9 +10,10 @@ import io
 import json
 import os
 import zipfile
-from typing import Dict
+from typing import Dict, Tuple
 
 import chex
+import distrax
 import jax.scipy.stats as st
 import requests
 from jax import numpy as jnp
@@ -20,7 +21,6 @@ from jax import numpy as jnp
 from ploo import Model
 from ploo.hmc import InfParams
 from ploo.model import ModelParams
-from ploo.transforms import LogTransform
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "radon_data")
 _DATA_FILE = os.path.join(_DATA_DIR, "radon_all.json")
@@ -87,7 +87,7 @@ class RadonCountyIntercept(Model):
     .. _[1]: https://github.com/stan-dev/posteriordb/blob/master/posterior_database/models/stan/radon_county_intercept.stan
     """  # noqa: B950  # pylint: disable=line-too-long
 
-    sigma_tx = LogTransform()
+    sigma_tx = distrax.Lambda(jnp.log)
 
     def __init__(self) -> None:
         """Creates radon county intercept model
@@ -102,19 +102,19 @@ class RadonCountyIntercept(Model):
         self.county_index = data["county_index"]
         self.floor_measure = data["floor_measure"]
 
-    def log_likelihood(self, model_params: ModelParams) -> chex.ArrayDevice:
+    def log_prior_likelihood(
+        self, model_params: ModelParams
+    ) -> Tuple[chex.ArrayDevice, chex.ArrayDevice]:
         alpha = model_params["alpha"]
         sigma_y = model_params["sigma_y"]
         beta = model_params["beta"]
-        # mu is conditional mean
-        mu = alpha[self.county_index] + beta * self.floor_measure
-        return st.norm.logpdf((self.log_radon - mu) / sigma_y, loc=0.0, scale=1.0)
-
-    def log_prior(self, model_params: ModelParams) -> chex.ArrayDevice:
-        alpha_prior = st.norm.logpdf(model_params["alpha"], loc=0.0, scale=10.0)
-        sigma_prior = st.norm.logpdf(model_params["sigma_y"], loc=0.0, scale=1.0)
-        beta_prior = st.norm.logpdf(model_params["beta"], loc=0.0, scale=10.0)
-        return jnp.sum(alpha_prior) + sigma_prior + beta_prior
+        alpha_prior = st.norm.logpdf(alpha, loc=0.0, scale=10.0)
+        sigma_prior = st.norm.logpdf(sigma_y, loc=0.0, scale=1.0)
+        beta_prior = st.norm.logpdf(beta, loc=0.0, scale=10.0)
+        lprior = jnp.sum(alpha_prior) + sigma_prior + beta_prior
+        mu = alpha[self.county_index] + beta * self.floor_measure  # cond. mean
+        llik = st.norm.logpdf((self.log_radon - mu) / sigma_y, loc=0.0, scale=1.0)
+        return lprior, llik
 
     def log_cond_pred(
         self, model_params: ModelParams, coords: chex.ArrayDevice
@@ -135,19 +135,20 @@ class RadonCountyIntercept(Model):
             "alpha": jnp.zeros(shape=(self.J,)),
         }
 
-    def to_inference_params(self, model_params: ModelParams) -> InfParams:
+    def forward_transform(self, model_params: ModelParams) -> InfParams:
         return {
-            "sigma_y": self.sigma_tx.to_unconstrained(model_params["sigma_y"]),
+            "sigma_y": self.sigma_tx.forward(model_params["sigma_y"]),
             "beta": model_params["beta"],
             "alpha": model_params["alpha"],
         }
 
-    def to_model_params(self, inf_params: InfParams) -> ModelParams:
-        return {
-            "sigma_y": self.sigma_tx.to_constrained(inf_params["sigma_y"]),
+    def inverse_transform_log_det(
+        self, inf_params: InfParams
+    ) -> Tuple[ModelParams, chex.ArrayDevice]:
+        sigma_y_t, log_det = self.sigma_tx.inverse_and_log_det(inf_params["sigma_y"])
+        params = {
+            "sigma_y": sigma_y_t,
             "beta": inf_params["beta"],
             "alpha": inf_params["alpha"],
         }
-
-    def log_det(self, model_params: ModelParams) -> chex.ArrayDevice:
-        return self.sigma_tx.log_det(model_params["sigma_y"])
+        return params, log_det

@@ -19,49 +19,37 @@ from ploo.models import GaussianModel
 class TestGaussian(unittest.TestCase):
     def setUp(self) -> None:
         self.y = jnp.array([1.0, 0, -1.0])
-        self.m = GaussianModel(
+        self.model = GaussianModel(
             self.y, mu_loc=0.0, mu_scale=1.0, sigma_shape=2.0, sigma_rate=2.0
         )
 
     def test_log_lik(self):
         y = jnp.array([1.0, 0, -1.0])
 
-        # original (not a cv fold)
-        m = GaussianModel(y, mu_loc=0.0, mu_scale=1.0, sigma_shape=2.0, sigma_rate=2.0)
+        # full_data (not a cv fold)
+        model = GaussianModel(
+            y, mu_loc=0.0, mu_scale=1.0, sigma_shape=2.0, sigma_rate=2.0
+        )
         param = {"mu": 0.7, "sigma": 1.8}
-        lj = m.log_likelihood(param, -1) + m.log_prior(param)
+        log_prior, log_lhood = model.log_prior_likelihood(param)
         # NB gamma(a, rate) == gamma(a, scale=1/rate)
         ref_lp = st.norm(0.0, 1.0).logpdf(0.7) + st.gamma(
             a=2.0, scale=1.0 / 2.0
         ).logpdf(1.8)
         ref_ll = np.sum(st.norm(0.7, 1.8).logpdf(y))
-        self.assertAlmostEqual(lj, ref_lp + ref_ll, places=5)
-
-        # first cv fold (index 0)
-        lj = m.log_likelihood(param, 0) + m.log_prior(param)
-        ref_ll = np.sum(st.norm(0.7, 1.8).logpdf(y[1:3]))
-        self.assertAlmostEqual(lj, ref_lp + ref_ll, places=5)
-
-        # second cv fold (index 1)
-        lj = m.log_likelihood(param, 1) + m.log_prior(param)
-        ref_ll = np.sum(st.norm(0.7, 1.8).logpdf(y[np.array([0, 2])]))
-        self.assertAlmostEqual(lj, ref_lp + ref_ll, places=5)
+        self.assertAlmostEqual(
+            log_prior + jnp.sum(log_lhood), ref_lp + ref_ll, places=5
+        )
 
     def test_transforms(self):
         mp = {"mu": 0.5, "sigma": 2.5}
         tp = {"mu": 0.5, "sigma": jnp.log(2.5)}
-        self.assertAlmostEqual(
-            jnp.array(mp["mu"]), self.m.to_model_params(tp)["mu"], places=5
-        )
-        self.assertAlmostEqual(
-            jnp.array(mp["sigma"]), self.m.to_model_params(tp)["sigma"], places=5
-        )
-        self.assertAlmostEqual(
-            jnp.array(tp["mu"]), self.m.to_inference_params(mp)["mu"], places=5
-        )
-        self.assertAlmostEqual(
-            jnp.array(tp["sigma"]), self.m.to_inference_params(mp)["sigma"], places=5
-        )
+        transformed, _ = self.model.inverse_transform_log_det(tp)
+        self.assertAlmostEqual(jnp.array(mp["mu"]), transformed["mu"], places=5)
+        self.assertAlmostEqual(jnp.array(mp["sigma"]), transformed["sigma"], places=5)
+        transformed = self.model.forward_transform(mp)
+        self.assertAlmostEqual(jnp.array(tp["mu"]), transformed["mu"], places=5)
+        self.assertAlmostEqual(jnp.array(tp["sigma"]), transformed["sigma"], places=5)
 
     def test_hmc(self):
         y = GaussianModel.generate(N=200, mu=0.5, sigma=2.0, seed=42)

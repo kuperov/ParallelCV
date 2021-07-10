@@ -204,8 +204,9 @@ class _Posterior(az.InferenceData):
         """
         rng_key = rng_key or self.rng_key
         timer = Timer()
-        # shape from a likelihood evaluation: wasteful but prevents mistakes
-        cv_shape = self.model.log_likelihood(self.model.initial_value()).shape
+        # shape from a likelihood evaluation: wasteful but reduces mistakes
+        _, example_ll = self.model.log_prior_likelihood(self.model.initial_value())
+        cv_shape = example_ll.shape
         if isinstance(cv_scheme, str):
             cv_scheme = cv_factory(cv_scheme)(shape=cv_shape, **kwargs)
         cv_chains = self.chains * cv_scheme.cv_folds()
@@ -223,7 +224,7 @@ class _Posterior(az.InferenceData):
             return self.model.cv_potential(inf_params, masks[cv_fold])
 
         def log_cond_pred(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
-            model_params = self.model.to_model_params(inf_params)
+            model_params, _ = self.model.inverse_transform_log_det(inf_params)
             return self.model.log_cond_pred(model_params, pred_indexes[cv_fold])
 
         accumulator, states = cross_validate(
@@ -300,12 +301,11 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
     ) -> None:
         """Create a new CrossValidation instance
 
-        Args:
-            post:         full-data posterior
-            accumulator:  state accumulator used during inference step
-            states:       MCMC states, as dict keyed by parameter
-            folds:        number of cross-validation folds
-            fold_indexes: indexes of cross-validation folds
+        :param post: full-data posterior
+        :param accumulator: state accumulator used during inference step
+        :param states: MCMC states, as dict keyed by parameter
+        :param folds: number of cross-validation folds
+        :param fold_indexes: indexes of cross-validation folds
         """
         self.post = post
         self.accumulator = accumulator
@@ -446,40 +446,31 @@ class Model:
 
     name = "Unnamed model"
 
-    def log_likelihood(self, model_params: ModelParams) -> chex.ArrayDevice:
-        """Log likelihood
+    def log_prior_likelihood(
+        self, model_params: ModelParams
+    ) -> Tuple[chex.ArrayDevice, chex.ArrayDevice]:
+        """Log likelihood log p(y|θ) and prior log p(θ)
 
-        JAX needs to be able to trace this function.
+        .. note::
+            JAX needs to be able to trace this function. See JAX docs for what that
+            means.
 
         :param model_params: dict of model parameters, in constrained (model)
                              parameter space
-        :return: log likelihood at the given parameters for the given CV fold
-        """
-        raise NotImplementedError()
-
-    def log_prior(self, model_params: ModelParams) -> chex.ArrayDevice:
-        """Compute log prior log p(θ)
-
-        JAX needs to be able to trace this function.
-
-        :param model_params: dict of model parameters in constrained (model)
-                             parameter space
+        :return: log likelihood at the given parameters
         """
         raise NotImplementedError()
 
     def log_cond_pred(
         self, model_params: ModelParams, coords: chex.ArrayDevice
     ) -> chex.ArrayDevice:
-        """Computes log conditional predictive ordinate, log p(ỹ|θˢ).
+        """Computes log conditional predictive ordinate, log p(yᵢ|θˢ).
 
-        FIXME: needs some kind of index to identify the conditioning values
-
-        Args:
-            params:  a dict of parameters (constrained (model) parameter
-                     space) that potentially contains vectors
-            coords:  points at which to evaluate predictive density, expressed
-                     as coordinates that correspond to the shape of the log
-                     likelihood contributions
+        :param model_params: a dict of parameters (constrained (model) parameter
+            space) that potentially contains vectors
+        :param coords: points at which to evaluate predictive density, expressed
+            as coordinates that correspond to the shape of the log likelihood
+            contributions array
         """
         raise NotImplementedError()
 
@@ -489,98 +480,60 @@ class Model:
 
     def initial_value_unconstrained(self) -> InfParams:
         """Deterministic starting value, transformed to unconstrained inference space"""
-        return self.to_inference_params(self.initial_value())
+        inf_params, _ = self.inverse_transform_log_det(self.initial_value())
+        return inf_params
 
     def cv_potential(
         self, inf_params: InfParams, likelihood_mask: chex.ArrayDevice
     ) -> chex.ArrayDevice:
         """Potential for a CV fold.
 
-        Args:
-            inf_params: model parameters in inference (unconstrained) space
-            lhood_mask: mask to apply to likelihood contributions by elementwise
-                        multiplication
-
-        Returns
-            joint potential of model, adjusted for CV fold
+        :param inf_params: model parameters in inference (unconstrained) space
+        :param likelihood_mask: mask to apply to likelihood contributions by
+            elementwise multiplication
+        :return: potential of model, adjusted for CV fold
         """
-        model_params = self.to_model_params(inf_params)
-        llik = self.log_likelihood(model_params=model_params) * likelihood_mask
-        lprior = self.log_prior(model_params=model_params)
-        ldet = self.log_det(model_params=model_params)
-        return -jnp.sum(llik) - lprior - ldet
-
-    def potential(self, inf_params: InfParams, cv_fold: int = -1) -> chex.ArrayDevice:
-        """Potential for a CV fold.
-
-        Args:
-            inf_params: model parameters in inference (unconstrained) space
-            cv_fold:    NOT USED - dummy parameter so we can reuse HMC routines
-
-        Returns
-            joint potential of model, adjusted for CV fold
-        """
-        model_params = self.to_model_params(inf_params)
-        llik = self.log_likelihood(model_params=model_params)
-        lprior = self.log_prior(model_params=model_params)
-        ldet = self.log_det(model_params=model_params)
-        return -jnp.sum(llik) - lprior - ldet
+        model_params, ldet = self.inverse_transform_log_det(inf_params)
+        lprior, llik = self.log_prior_likelihood(model_params=model_params)
+        llik_subset = jnp.sum(llik * likelihood_mask)
+        return -(llik_subset + lprior + ldet)
 
     def parameters(self):
         """Names of parameters"""
         return list(self.initial_value().keys())
 
-    @classmethod
-    def generate(
-        cls, random_key: chex.ArrayDevice, model_params: ModelParams
-    ) -> chex.ArrayDevice:
-        """Generate a dataset corresponding to the specified random key."""
-        raise NotImplementedError()
-
     # pylint: disable=no-self-use
-    def to_inference_params(self, model_params: ModelParams) -> InfParams:
+    def forward_transform(self, model_params: ModelParams) -> InfParams:
         """Convert constrained (model) params to unconstrained (sampler) space
 
         The argument model_params is expressed in constrained (model) coordinate
         space.
 
-        Args:
-            model_params: dictionary of parameters in constrained (model)
-                          parameter space, keyed by name
-
-        Returns:
-            dictionary of parameters with same structure as params, but
-            in unconstrained (sampler) parameter space.
+        :param model_params: dictionary of parameters in constrained (model)
+            parameter space, keyed by name
+        :return: dictionary of parameters with same structure as params, but in
+            unconstrained (sampler) parameter space.
         """
+        # by default just do identity transform
         return model_params
 
-    def to_model_params(self, inf_params: InfParams) -> ModelParams:
-        """Convert unconstrained to constrained parameters space
+    def inverse_transform_log_det(
+        self, inf_params: InfParams
+    ) -> Tuple[ModelParams, chex.ArrayDevice]:
+        """Map unconstrained to constrained parameters, with log determinant
 
         Maps unconstrained (inference) params in `inf_params` to corresponding
-        parameters in constrained (model) parameter space.
+        parameters in constrained (model) parameter space. We do both at once so it's
+        harder to forget to implement the log determinant.
 
-        Args:
-            inf_params: dictionary of parameters in unconstrained (sampler) parameter
-                        space, keyed by name
-
-        Returns:
-            dictionary of parameters with same structure as inf_params, but
-            in constrained (model) parameter space.
+        :param inf_params: dictionary of parameters in unconstrained (sampler)
+            parameter space, keyed by name
+        :return: Tuple of model parameter dict and log determinant. The parameter dict
+            has the same structure as inf_params, but in constrained (model) parameter
+            space.
         """
-        return inf_params
-
-    # pylint: disable=unused-argument
-    def log_det(self, model_params: ModelParams) -> chex.ArrayDevice:
-        """Return total log determinant of transformation to constrained parameters
-
-        Args:
-            model_params: dic of parameters in constrained (model) parameter space
-
-        Returns:
-            dictionary of parameters with same structure as model_params
-        """
-        return 0.0
+        # by default just do identity transform
+        return inf_params, jnp.array(0.0)
 
     def inference(
         self,
@@ -592,12 +545,12 @@ class Model:
     ) -> _Posterior:
         """Run HMC with full dataset, tuned by Stan+NUTS warmup
 
-        Args:
-            draws:          number of draws per chain
-            warmup_steps:   number of Stan warmup steps to run
-            chains:         number of chains for main inference step
-            seed:           random seed
-            warmup_results: use this instead of running warmup
+        :param draws: number of draws per chain
+        :param warmup_steps: number of Stan warmup steps to run
+        :param chains: number of chains for main inference step
+        :param seed: random seed
+        :parm warmup_results: use this instead of running warmup
+        :return: posterior object
         """
         rng_key = random.PRNGKey(seed)
         warmup_key, inference_key, post_key = random.split(rng_key, 3)
@@ -611,8 +564,12 @@ class Model:
         else:
             print("Starting Stan warmup using NUTS...")
             timer = Timer()
+
+            def warmup_potential(params):
+                return self.cv_potential(params, jnp.array(1.0))
+
             warmup_results = warmup(
-                self.potential,
+                warmup_potential,
                 self.initial_value(),
                 warmup_steps,
                 chains,
@@ -632,16 +589,25 @@ class Model:
             f"({chains} chains, {draws:,} draws per chain)..."
         )
         timer = Timer()
+
+        def inference_potential(params, _dummy_fold):
+            return self.cv_potential(params, jnp.array(1.0))
+
         accum, states = full_data_inference(
-            self.potential, warmup_results, draws, chains, inference_key
+            inference_potential, warmup_results, draws, chains, inference_key
         )
         divergent_chains = jnp.sum(accum.divergence_count > 0)
         if divergent_chains > 0:
             print(f"      WARNING: {divergent_chains} divergent chain(s).")
         accept_rate_pc = float(100 * jnp.mean(accum.accepted_count) / draws)
         print(f"      Average HMC acceptance rate {accept_rate_pc:.1f}%.")
-        # map positions back to model coordinates
-        position_model = vmap(self.to_model_params)(states.position)
+
+        # map positions back to model coordinates (drop log determinant)
+        def inverse_tfm(params):
+            mparam, _ = self.inverse_transform_log_det(params)
+            return mparam
+
+        position_model = vmap(inverse_tfm)(states.position)
         # want axes to be (chain, draws, ... <variable dims> ...)
         rearranged_positions = {
             var: jnp.swapaxes(draws, axis1=0, axis2=1)

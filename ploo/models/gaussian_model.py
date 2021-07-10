@@ -3,13 +3,16 @@
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
 """
+from typing import Tuple
+
+import chex
+import distrax
 import jax.scipy.stats as st
 from jax import numpy as jnp
 from jax import random
 
 import ploo
 from ploo.model import CVFold, InfParams, ModelParams
-from ploo.transforms import LogTransform
 
 
 class GaussianModel(ploo.Model):
@@ -23,11 +26,11 @@ class GaussianModel(ploo.Model):
     """
 
     name = "Gaussian model"
-    sigma_transform = LogTransform()
+    sigma_transform = distrax.Lambda(jnp.log)
 
     def __init__(
         self,
-        y: jnp.DeviceArray,
+        y: chex.ArrayDevice,
         mu_loc: float = 0.0,
         mu_scale: float = 1.0,
         sigma_shape: float = 2.0,
@@ -40,21 +43,20 @@ class GaussianModel(ploo.Model):
         self.sigma_shape = sigma_shape
         self.sigma_rate = sigma_rate
 
-    def log_likelihood(self, model_params: ModelParams, cv_fold=-1) -> jnp.DeviceArray:
-        lik_contribs = st.norm.logpdf(
-            self.y, loc=model_params["mu"], scale=model_params["sigma"]
-        )
-        log_lik = jnp.where(self.folds != cv_fold, lik_contribs, 0).sum()
-        return log_lik
-
-    def log_prior(self, model_params: ModelParams) -> jnp.DeviceArray:
+    def log_prior_likelihood(
+        self, model_params: ModelParams
+    ) -> Tuple[chex.ArrayDevice, chex.ArrayDevice]:
         mu_prior = st.norm.logpdf(
             model_params["mu"], loc=self.mu_loc, scale=self.mu_scale
         )
         sigma_prior = st.gamma.logpdf(
             model_params["sigma"], a=self.sigma_shape, scale=1.0 / self.sigma_rate
         )
-        return mu_prior + sigma_prior
+        lprior = mu_prior + sigma_prior
+        log_lik = st.norm.logpdf(
+            self.y, loc=model_params["mu"], scale=model_params["sigma"]
+        )
+        return lprior, log_lik
 
     def log_cond_pred(self, model_params: ModelParams, coords: CVFold):
         y_tilde = self.y[coords]  # in this example cv_fold just indexes the data
@@ -65,25 +67,18 @@ class GaussianModel(ploo.Model):
     def initial_value(self) -> ModelParams:
         return {"mu": 0.0, "sigma": 1.0}
 
-    def cv_folds(self):
-        return len(self.y)
+    def inverse_transform_log_det(
+        self, inf_params: InfParams
+    ) -> Tuple[ModelParams, chex.ArrayDevice]:
+        sigma = inf_params["sigma"]
+        sigma_t, sigma_ldet = self.sigma_transform.inverse_and_log_det(sigma)
+        model_params = {"mu": inf_params["mu"], "sigma": sigma_t}
+        return model_params, sigma_ldet
 
-    def to_model_params(self, inf_params: InfParams) -> ModelParams:
-        model_params = {
-            "mu": inf_params["mu"],
-            "sigma": self.sigma_transform.to_constrained(inf_params["sigma"]),
-        }
-        return model_params
-
-    def to_inference_params(self, model_params: ModelParams) -> InfParams:
-        inf_params = {
-            "mu": model_params["mu"],
-            "sigma": self.sigma_transform.to_unconstrained(model_params["sigma"]),
-        }
+    def forward_transform(self, model_params: ModelParams) -> InfParams:
+        sigma_t = self.sigma_transform.forward(model_params["sigma"])
+        inf_params = {"mu": model_params["mu"], "sigma": sigma_t}
         return inf_params
-
-    def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
-        return self.sigma_transform.log_det(model_params["sigma"])
 
     @classmethod
     def generate(cls, N=200, mu=0.5, sigma=2.0, seed=42):

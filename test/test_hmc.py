@@ -40,8 +40,12 @@ class TestInference(unittest.TestCase):
 
     def test_warmup(self):
         """Test warmup. See also test_model.py"""
-        initial = self.gauss.to_inference_params(self.gauss.initial_value())
-        warmup_res = warmup(self.gauss.potential, initial, 600, 8, self.rng_key)
+
+        def potential(params):
+            return self.gauss.cv_potential(params, 1.0)
+
+        initial = self.gauss.forward_transform(self.gauss.initial_value())
+        warmup_res = warmup(potential, initial, 600, 8, self.rng_key)
         self.assertIsInstance(warmup_res, WarmupResults)
         self.assertEqual(warmup_res.int_steps, 3)
         self.assertIsInstance(warmup_res.starting_values, dict)
@@ -70,7 +74,7 @@ class TestInference(unittest.TestCase):
             cv_potential=self.gauss.cv_potential,
             cv_cond_pred=self.gauss.log_cond_pred,
             warmup_res=self.warmup,
-            cv_folds=self.gauss.cv_folds(),
+            cv_folds=200,
             draws=200,
             chains=2,
             rng_key=self.rng_key,
@@ -83,7 +87,7 @@ class TestInference(unittest.TestCase):
             cv_potential=self.gauss.cv_potential,
             cv_cond_pred=self.gauss.log_cond_pred,
             warmup_res=self.warmup,
-            cv_folds=self.gauss.cv_folds(),
+            cv_folds=200,
             draws=200,
             chains=2,
             rng_key=self.rng_key,

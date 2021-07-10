@@ -145,7 +145,7 @@ def warmup(
         and integration steps.
     """
     # pass cv_fold = -1 even though should not be necessary
-    assert jnp.isfinite(potential(initial_value, -1)), "Invalid initial value"
+    assert jnp.isfinite(potential(initial_value)), "Invalid initial value"
     warmup_key, start_val_key = random.split(rng_key)
 
     def kernel_factory(step_size, inverse_mass_matrix):

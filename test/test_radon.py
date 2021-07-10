@@ -25,7 +25,7 @@ class TestRadonModel(TestCase):
         chex.clear_trace_counter()
         model = RadonCountyIntercept()
         # sanity checks
-        ipot = model.potential(model.initial_value())
+        ipot = model.cv_potential(model.initial_value(), 1.0)
         self.assertTrue(jnp.isfinite(ipot))
         # run mcmc
         post = model.inference(draws=100, warmup_steps=100)
