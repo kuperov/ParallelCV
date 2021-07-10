@@ -1,7 +1,7 @@
 arviz
 blackjax
 chex
-distrax @ git+https://github.com/deepmind/distrax.git@dd3363a64017c5eafb3241bb2a3884de50f21427
+distrax @ git+git@github.com:kuperov/distrax.git@downgrade_jaxlib
 jax
 jaxlib
 matplotlib
