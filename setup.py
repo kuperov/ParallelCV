@@ -14,6 +14,15 @@ with open(path.join(here, "README.md"), encoding="utf-8") as buff:
     long_description = buff.read()
 
 
+def _parse_requirements(req_path):
+    with open(path.join(here, 'requirements', req_path)) as req_file:
+        return [
+            line.rstrip()
+            for line in req_file
+            if not (line.isspace() or line.startswith('#'))
+        ]
+
+
 setup(
     name="ploo",
     version="0.0.1",
@@ -30,6 +39,7 @@ setup(
         "Programming Language :: Python :: 3.7",
     ],
     packages=find_packages(exclude=["test"]),
-    install_requires=["arviz", "blackjax", "chex", "jax", "jaxlib", "matplotlib", "tabulate"],
+    install_requires=_parse_requirements('requirements.txt'),
+    tests_require=_parse_requirements('requirements-tests.txt'),
     include_package_data=True,
 )
