@@ -209,8 +209,11 @@ class _Posterior(az.InferenceData):
         if isinstance(cv_scheme, str):
             cv_scheme = cv_factory(cv_scheme)(shape=cv_shape, **kwargs)
         cv_chains = self.chains * cv_scheme.cv_folds()
+        title = f"Brute-force {cv_scheme.name}: {self.model.name}"
+        print(title)
+        print("=" * len(title))
         print(
-            f"Cross-validation with {cv_scheme.cv_folds():,} folds "
+            f"Fitting posteriors for {cv_scheme.cv_folds():,} folds "
             f"using {cv_chains:,} chains..."
         )
         masks = cv_scheme.mask_array()
@@ -599,8 +602,9 @@ class Model:
         rng_key = random.PRNGKey(seed)
         warmup_key, inference_key, post_key = random.split(rng_key, 3)
         draws, warmup_steps = int(draws), int(warmup_steps)
-        print("Full-data posterior inference")
-        print("=============================")
+        title = f"Full-data posterior inference: {self.name}"
+        print(title)
+        print("=" * len(title))
         _print_devices()
         if warmup_results:
             print("Skipping warmup")
