@@ -48,7 +48,7 @@ venv:
 	python3 -m virtualenv --python=python3 venv
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install -r requirements/requirements.txt
-	$(PYTHON) -m install -r requirements/requirements-dev.txt
+	$(PYTHON) -m pip install -r requirements/requirements-dev.txt
 	$(PYTHON) setup.py develop
 
 pretty:
@@ -66,12 +66,14 @@ lint:
 gpu:
 	# install gpu-enabled version of jax
 	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip uninstall -y jax jaxlib
 	$(PYTHON) -m pip install --upgrade "jax[cuda111]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
 cpu:
 	# install cpu-only version of jax
 	$(PYTHON) -m pip install --upgrade pip
-	$(PYTHON) -m pip install --upgrade "jax[cpu]"
+	$(PYTHON) -m pip uninstall -y jax jaxlib
+	$(PYTHON) -m pip install --upgrade "jax[cpu]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
 .PHONY: fixtures
 fixtures:
