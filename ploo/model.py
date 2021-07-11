@@ -351,10 +351,11 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         avg_accept = float(jnp.mean(self.acceptance_rates))
         min_accept = float(jnp.min(self.acceptance_rates))
         max_accept = float(jnp.max(self.acceptance_rates))
+        title = f"{self.scheme} Summary: {self.model.name}"
         return "\n".join(
             [
-                "Cross-validation summary",
-                "========================",
+                title,
+                "=" * len(title),
                 "",
                 f"    elpd = {self.elpd:.4f} (se {self.elpd_se:.4f})",
                 "",
@@ -574,9 +575,9 @@ class Model:
         accept_rate_pc = float(100 * jnp.mean(accum.accepted_count) / draws)
         print(f"      Average HMC acceptance rate {accept_rate_pc:.1f}%.")
 
-        # map positions back to model coordinates (drop log determinant)
+        # map positions back to model coordinates
         def inverse_tfm(params):
-            mparam, _ = self.inverse_transform_log_det(params)
+            mparam, _ = self.inverse_transform_log_det(params)  # ignore log det
             return mparam
 
         position_model = vmap(inverse_tfm)(states.position)
