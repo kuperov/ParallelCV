@@ -10,10 +10,8 @@ from typing import Any, Dict, Iterable, Tuple, Union
 
 import arviz as az
 import chex
-import jax
 import matplotlib.pyplot as plt
 import numpy as np
-import xarray as xr
 from jax import numpy as jnp
 from jax import random, vmap
 from scipy import stats as sst
@@ -29,7 +27,7 @@ from .hmc import (
 )
 from .schemes import CrossValidationScheme, cv_factory
 from .statistics import ess, split_rhat
-from .util import Timer
+from .util import Timer, print_devices, to_posterior_dict
 
 # model parameters are in a constrained coordinate space
 ModelParams = Dict[str, chex.ArrayDevice]
@@ -40,44 +38,6 @@ CVFold = Union[int, Tuple[int, int]]
 _ARVIZ_PLOT = [name for name in dir(az) if name.startswith("plot_")]
 _ARVIZ_OTHER = ["summary", "ess", "loo"]
 _ARVIZ_METHODS = _ARVIZ_PLOT + _ARVIZ_OTHER
-
-
-def _print_devices():
-    """Print summary of available devices to console."""
-    device_list = [f"{d.device_kind} ({d.platform}{d.id})" for d in jax.devices()]
-    if len(device_list) > 0:
-        print(f'Detected devices: {", ".join(device_list)}')
-    else:
-        print("Only CPU is available. Check cuda/cudnn library versions.")
-
-
-def _to_posterior_dict(post_draws: chex.ArrayDevice) -> xr.Dataset:
-    """Construct xarrays for ArviZ
-
-    Converts all objects to in-memory numpy arrays. This involves a lot of copying,
-    of course, but ArviZ chokes if given jax.numpy arrays.
-
-    :param post_draws: dict of posterior draws, keyed by parameter name
-    :returns: xarray dataset suitable for passing to az.InferenceData
-    """
-    first_param = next(iter(post_draws))
-    chains = post_draws[first_param].shape[0]
-    draws = post_draws[first_param].shape[1]
-    post_draw_map = {}
-    coords = {  # gets updated for
-        "chain": (["chain"], np.arange(chains)),
-        "draw": (["draw"], np.arange(draws)),
-    }
-    for var, drws in post_draws.items():
-        # dimensions are chain, draw number, variable dim 0, variable dim 1, ...
-        extra_dims = [(f"{var}{i}", length) for i, length in enumerate(drws.shape[2:])]
-        keys = ["chain", "draw"] + [n for n, len in extra_dims]
-        post_draw_map[var] = (keys, np.asarray(drws))
-        for dimname, length in extra_dims:
-            coords[dimname] = ([dimname], np.arange(length))
-
-    posterior = xr.Dataset(post_draw_map, coords=coords)
-    return posterior
 
 
 class _Posterior(az.InferenceData):
@@ -111,7 +71,7 @@ class _Posterior(az.InferenceData):
         self.warmup_res = warmup_res
         self.rng_key = rng_key
         self.accumulator = accumulator
-        posterior = _to_posterior_dict(self.post_draws)
+        posterior = to_posterior_dict(self.post_draws)
         super().__init__(posterior=posterior)
 
     @property
@@ -370,7 +330,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         draw_subset = {
             var: np.compress(chain_i, drw, axis=0) for (var, drw) in self.states.items()
         }
-        return az.InferenceData(posterior=_to_posterior_dict(draw_subset))
+        return az.InferenceData(posterior=to_posterior_dict(draw_subset))
 
     @property
     def divergences(self):
@@ -570,7 +530,7 @@ class Model:
         title = f"Full-data posterior inference: {self.name}"
         print(title)
         print("=" * len(title))
-        _print_devices()
+        print_devices()
         if warmup_results:
             print("Skipping warmup")
         else:
