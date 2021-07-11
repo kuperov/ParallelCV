@@ -62,7 +62,7 @@ class _GaussianVarianceModel(Model):
     def inverse_transform_log_det(
         self, inf_params: InfParams
     ) -> Tuple[ModelParams, chex.ArrayDevice]:
-        sst, jac = self.sigma_sq_t.inverse_log_det_jacobian(inf_params["sigma_sq"])
+        sst, jac = self.sigma_sq_t.inverse_and_log_det(inf_params["sigma_sq"])
         constrained = {"sigma_sq": sst}
         return constrained, jac
 
@@ -70,6 +70,14 @@ class _GaussianVarianceModel(Model):
     def generate(
         cls, N: int, mean: float, sigma_sq: float, rng_key: jnp.DeviceArray
     ) -> jnp.DeviceArray:
+        """Simulate the model with the given parameters
+
+        :param N: number of observations
+        :param mean: mean of process
+        :param sigma_sq: true variance of generated observations
+        :param rng_key: random number generator state
+        :return: jax array of observations
+        """
         return mean + jnp.sqrt(sigma_sq) * jax.random.normal(shape=(N,), key=rng_key)
 
 
@@ -84,18 +92,20 @@ class TestModelInferenceAndParams(unittest.TestCase):
 
     def test_log_transform(self):
         """Log transformation between parameter on half line and full line"""
-        llik = self.model.log_likelihood(model_params={"sigma_sq": 2.5})
-        lprior = self.model.log_prior({"sigma_sq": 2.5})
-        ldet = self.model.log_det({"sigma_sq": 2.5})
-        pot = self.model.potential(inf_params={"sigma_sq": jnp.log(2.5)})
+        model_params = {"sigma_sq": 2.5}
+        inf_params = self.model.forward_transform(model_params)
+        self.assertAlmostEqual(
+            jnp.log(model_params["sigma_sq"]), inf_params["sigma_sq"]
+        )
+        lprior, llik = self.model.log_prior_likelihood(model_params)
+        _, ldet = self.model.inverse_transform_log_det(inf_params)
+        pot = self.model.cv_potential(inf_params=inf_params, likelihood_mask=1.0)
         self.assertAlmostEqual(llik + lprior, -pot - ldet, places=5)
 
     def test_initial_value(self):
         """Initial parameter value for seeding MCMC"""
         self.assertDictEqual(self.model.initial_value(), {"sigma_sq": 1.0})
-        self.assertDictEqual(
-            self.model.initial_value_unconstrained(), {"sigma_sq": 0.0}
-        )
+        self.assertDictEqual(self.model.initial_value_transformed(), {"sigma_sq": 0.0})
 
     def test_log_pred(self):
         """Log predictive, log p(ỹ | y)"""
@@ -153,12 +163,12 @@ class TestComparisons(unittest.TestCase):
         # check comparisons across CVs
         cmp_res = compare(cv_1, cv_2, cv_3)
         self.assertEqual(cmp_res.names(), ["model0", "model1", "model2"])
-        for m in ["LOO", "model0", "model1", "model2"]:
-            self.assertIn(m, repr(cmp_res))
+        for model in ["LOO", "model0", "model1", "model2"]:
+            self.assertIn(model, repr(cmp_res))
         cmp_res = compare(cv_1, bad_model=cv_2, awful_model=cv_3)
         self.assertEqual(cmp_res.names(), ["model0", "bad_model", "awful_model"])
-        for m in ["LOO", "model0", "bad_model", "awful_model"]:
-            self.assertIn(m, repr(cmp_res))
+        for model in ["LOO", "model0", "bad_model", "awful_model"]:
+            self.assertIn(model, repr(cmp_res))
         self.assertIs(cmp_res[0], cv_1)
         self.assertIs(cmp_res["model0"], cv_1)
         # can a cv with no draws be represented as string?

@@ -51,7 +51,7 @@ def _print_devices():
         print("Only CPU is available. Check cuda/cudnn library versions.")
 
 
-def _to_posterior_dict(post_draws):
+def _to_posterior_dict(post_draws: chex.ArrayDevice) -> xr.Dataset:
     """Construct xarrays for ArviZ
 
     Converts all objects to in-memory numpy arrays. This involves a lot of copying,
@@ -193,14 +193,12 @@ class _Posterior(az.InferenceData):
         memory on your GPU. Even moderately-sized problems can exhaust a GPU's memory
         quite quickly.
 
-        Args:
-            cv_scheme:    name of cross-validation scheme to apply
-            retain_draws: if true, retain MCMC draws
-            rng_key:      random generator state
-            kwargs:       arguments to pass to cross-validation scheme constructor
+        :param cv_scheme: name of cross-validation scheme to apply
+        :param retain_draws: if true, retain MCMC draws
+        :param rng_key: random generator state
+        :param kwargs: arguments to pass to cross-validation scheme constructor
 
-        Returns:
-            CrossValidation object containing all CV posteriors
+        :return: CrossValidation object containing all CV posteriors
         """
         rng_key = rng_key or self.rng_key
         timer = Timer()
@@ -246,10 +244,14 @@ class _Posterior(az.InferenceData):
             f" ({cv_chains*self.draws/timer.sec:,.0f} iter/sec)."
         )
 
+        def inverse_transform(param):
+            model_param, _ = self.model.inverse_transform_log_det(param)
+            return model_param
+
         if retain_draws:
             # map positions back to model coordinates
             # NB: if we can evaluate objective online, this will not be necessary
-            position_model = vmap(self.model.to_model_params)(states)
+            position_model = vmap(inverse_transform)(states)
             # want axes to be (chain, draws, ... <variable dims> ...)
             rearranged_draws = {
                 var: jnp.swapaxes(draws, axis1=0, axis2=1)
@@ -478,9 +480,9 @@ class Model:
         """A deterministic starting value in model parameter space."""
         raise NotImplementedError()
 
-    def initial_value_unconstrained(self) -> InfParams:
+    def initial_value_transformed(self) -> InfParams:
         """Deterministic starting value, transformed to unconstrained inference space"""
-        inf_params, _ = self.inverse_transform_log_det(self.initial_value())
+        inf_params = self.forward_transform(self.initial_value())
         return inf_params
 
     def cv_potential(
@@ -549,7 +551,7 @@ class Model:
         :param warmup_steps: number of Stan warmup steps to run
         :param chains: number of chains for main inference step
         :param seed: random seed
-        :parm warmup_results: use this instead of running warmup
+        :param warmup_results: use this instead of running warmup
         :return: posterior object
         """
         rng_key = random.PRNGKey(seed)

@@ -10,6 +10,7 @@ which defines the CV folds and deletion patterns.
 
 from typing import Callable, Dict, List, NamedTuple, Tuple, Union
 
+import chex
 import jax
 import numpy as np
 from blackjax import nuts, stan_warmup
@@ -20,12 +21,12 @@ from jax import scipy as jscipy
 from jax import vmap
 from jax.flatten_util import ravel_pytree
 
-Array = Union[np.ndarray, jnp.DeviceArray]
+Array = Union[np.ndarray, chex.ArrayDevice]
 PyTree = Union[Dict, List, Tuple]
 
 
 # inference parameter type annotation
-InfParams = Dict[str, jnp.DeviceArray]
+InfParams = Dict[str, chex.ArrayDevice]
 
 
 class IntegratorState(NamedTuple):
@@ -80,13 +81,12 @@ class CrossValidationState(NamedTuple):
 
 
 class WarmupResults(NamedTuple):
-    """Results of the warmup procedure
-
+    """Results of the warmup procedure.
     These parameters are used to configure future HMC runs.
     """
 
     step_size: float
-    mass_matrix: jnp.DeviceArray
+    mass_matrix: chex.ArrayDevice
     starting_values: List[Dict]
     int_steps: int
 
@@ -120,28 +120,24 @@ class WarmupResults(NamedTuple):
 def warmup(
     potential: Callable,
     initial_value: InfParams,
-    warmup_steps,
-    num_start_pos,
-    rng_key,
+    warmup_steps: int,
+    num_start_pos: int,
+    rng_key: chex.ArrayDevice,
 ) -> WarmupResults:
-    """Run Stan warmup
-
+    """Run Stan warmup.
     We sample initial positions from second half of the Stan warmup, running
     NUTS. Yes I know this is awful, awful, awful. Please don't judge, we'll
     replace it with a shiny new warmup scheme that will surely never have any
     problems ever.
 
-    Args:
-        cv_potential:  potential function, takes model parameter and cross-validation
-                       fold
-        initial_value: an initial value, expressed in inference (unconstrained)
-                       parameters
-        warmup_steps:  number of warmup iterations
-        num_start_pos: number of starting positions to extract
-        rng_key:       random generator state
-
-    Returns:
-        WarmupResults object containing step size, mass matrix, initial positions,
+    :param potential: potential function, takes model parameter and cross-validation
+        fold
+    :param initial_value: an initial value, expressed in inference (unconstrained)
+        parameters
+    :param warmup_steps: number of warmup iterations
+    :param num_start_pos: number of starting positions to extract
+    :param rng_key: random generator state
+    :return: WarmupResults object containing step size, mass matrix, initial positions,
         and integration steps.
     """
     # pass cv_fold = -1 even though should not be necessary
@@ -188,16 +184,18 @@ def full_data_inference(
     warmup_res: WarmupResults,
     draws: int,
     chains: int,
-    rng_key: jnp.DeviceArray,
-) -> CVHMCState:
+    rng_key: chex.ArrayDevice,
+) -> Tuple[CrossValidationState, CVHMCState]:
     """Full-data inference on model (i.e. no CV folds dropped)
 
-    Args:
-        potential:  potential function for HMC
-        warmup_res: results from warmup procedure
-        draws:      number of posterior draws per chain
-        chains:     number of chains
-        rng_key:    random generator state
+    :param potential: potential function for HMC
+    :param warmup_res: results from warmup procedure
+    :param draws: number of posterior draws per chain
+    :param chains: number of chains
+    :param rng_key: random generator state
+    :return: tuple of CrossValidationState, representing the accumulated state
+        over the entire MCMC chain, and CVHMCState object containing all draws
+        for all MCMC iterations
     """
     # NB: the special CV fold index of -1 indicates full-data inference.
     # Create one initial state per chain.
@@ -241,9 +239,9 @@ def cross_validate(
     cv_folds: int,
     draws: int,
     chains: int,
-    rng_key: jnp.DeviceArray,
+    rng_key: chex.ArrayDevice,
     retain_draws: bool = False,
-) -> CVHMCState:
+) -> Tuple[CrossValidationState, CVHMCState]:
     """Cross validation step.
 
     Runs inference acros all CV folds, using cross-validated version of model potential.
@@ -252,19 +250,19 @@ def cross_validate(
     the inference loop with something that calculates the objective functions
     (and diagnostics) we want using online estimators.
 
-    Args:
-        cv_potential: cross-validation model potential, function of
-                      (inference parameters, cv_fold)
-        cv_cond_pred: cross-validation conditional predictive density, function of
-                      (inference_parameters, cv_fold)
-        warmup_res:   results from warmup procedure
-        cv_folds:     number of cross-validation folds
-        draws:        number of draws per chain
-        chains:       number of chains per fold
-        key:          random generator state
-
-    Returns:
-        CVHMCState object containing conditional predictive
+    :param cv_potential: cross-validation model potential, function of
+        (inference parameters, cv_fold)
+    :param cv_cond_pred: cross-validation conditional predictive density, function of
+        (inference_parameters, cv_fold)
+    :param warmup_res: results from warmup procedure
+    :param cv_folds: number of cross-validation folds
+    :param draws: number of draws per chain
+    :param chains: number of chains per fold
+    :param rng_key: random generator state
+    :param retain_draws: if True, retain MCMC draws from all chains
+    :return: Tuple of :class`CrosssValidationState` (representing the accumulated state
+        across all MCMC draws), and (if `retain_draws==True`) a :class:`CVHMCState`
+        object containing conditional predictive
     """
     # assuming 4 chains and a 1-dimensional cross-validation structure,
     # chain_indexes = [0, 1, 2, 3, 0, 1, 2, 3, 0, ...]
@@ -292,10 +290,10 @@ def cross_validate(
 
         @jax.jit
         def do_cv():
-            # each step operates vector of states (representing a cross-section across chains)
-            # and vector of rng keys, one per draw
+            # each step operates vector of states (representing a cross-section
+            # across chains) and vector of rng keys, one per draw
             def one_step(
-                cv_state: CrossValidationState, rng_subkey: jnp.DeviceArray
+                cv_state: CrossValidationState, rng_subkey: chex.ArrayDevice
             ) -> Tuple[CrossValidationState, CVHMCState]:
                 keys = random.split(rng_subkey, chains * cv_folds)
                 hmc_state, hmc_info = vmap(kernel)(keys, cv_state.hmc_state)
@@ -324,10 +322,10 @@ def cross_validate(
 
         @jax.jit
         def do_cv():
-            # each step operates vector of states (representing a cross-section across chains)
-            # and vector of rng keys, one per draw
+            # each step operates vector of states (representing a cross-section
+            # across chains) and vector of rng keys, one per draw
             def one_step(
-                cv_state: CrossValidationState, rng_subkey: jnp.DeviceArray
+                cv_state: CrossValidationState, rng_subkey: chex.ArrayDevice
             ) -> Tuple[CrossValidationState, CVHMCState]:
                 keys = random.split(rng_subkey, chains * cv_folds)
                 hmc_state, hmc_info = vmap(kernel)(keys, cv_state.hmc_state)
@@ -523,22 +521,15 @@ def cv_hmc_proposal(
 ) -> Callable:
     """Vanilla HMC algorithm.
 
-    Parameters
-    ----------
-    integrator
-        Symplectic integrator used to build the trajectory step by step.
-    kinetic_energy
-        Function that computes the kinetic energy.
-    step_size
-        Size of the integration step.
-    num_integration_steps
-        Number of times we run the symplectic integrator to build the trajectory
-    divergence_threshold
-        Threshold above which we say that there is a divergence.
-
-    Returns
-    -------
-        A kernel that generates a new chain state and information about the transition.
+    :param integrator: symplectic integrator used to build the trajectory step by step.
+    :param kinetic_energy: Function that computes the kinetic energy.
+    :param step_size: Size of the integration step.
+    :param num_integration_steps: Number of times we run the symplectic integrator to
+        build the trajectory
+    :param divergence_threshold: Threshold above which we say that there is a
+        divergent transition.
+    :return: A kernel that generates a new chain state and information about the
+        transition.
     """
 
     def build_trajectory(
