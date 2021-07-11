@@ -25,14 +25,15 @@ from ploo.model import ModelParams
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "radon_data")
 _DATA_FILE = os.path.join(_DATA_DIR, "radon_all.json")
 
+_DATA_URL = "https://github.com/stan-dev/posteriordb/raw/master/posterior_database/data/data/radon_all.json.zip"  # noqa: B950 # pylint: disable=line-too-long
+
 
 def _download_data() -> None:
     """Download data for radon model
 
     :raises Exception: if data cannot be downloaded from github
     """
-    url = "https://github.com/stan-dev/posteriordb/raw/master/posterior_database/data/data/radon_all.json.zip"  # noqa: B950 # pylint: disable=line-too-long
-    req = requests.get(url)
+    req = requests.get(_DATA_URL)
     if req.status_code != 200:
         raise Exception("Failed to get data file from github")
     with zipfile.ZipFile(io.BytesIO(req.content)) as archive:

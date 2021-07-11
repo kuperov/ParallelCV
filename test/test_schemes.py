@@ -14,7 +14,7 @@ from ploo import LFO, LOO, KFold
 from ploo.schemes import LGO
 
 
-class TestCrossValidation(TestCase):
+class TestCrossValidationSchemes(TestCase):
     """Basic checks on cross-validation subclasses"""
 
     def test_loo_linear(self):
@@ -23,8 +23,9 @@ class TestCrossValidation(TestCase):
         self.assertEqual(linear_1.shape, (100,))
         self.assertEqual(linear_1.folds, 100)
         self.assertEqual(list(range(100)), list(linear_1))
-        linear_1_coords = linear_1.pred_index_array()
+        linear_1_coords, lengths = linear_1.pred_indexes()
         self.assertEqual(linear_1_coords.shape, (100, 1))
+        self.assertClose(lengths, np.array([1] * 100))
         linear_1_mask0 = linear_1.mask_for(next(iter(linear_1)))
         self.assertEqual(linear_1_mask0.shape, (100,))
         self.assertEqual(linear_1_mask0[0], 0.0)
@@ -45,8 +46,9 @@ class TestCrossValidation(TestCase):
         self.assertEqual(multi_1.shape, (20, 30))
         self.assertEqual(multi_1.folds, 20 * 30)
         self.assertEqual(len(list(multi_1)), multi_1.folds)
-        multi_1_coords = multi_1.pred_index_array()
+        multi_1_coords, lengths = multi_1.pred_indexes()
         self.assertEqual(multi_1_coords.shape, (600, 2))
+        self.assertClose(lengths, [1] * 600)
         multi_1_fold0 = next(iter(multi_1))
         self.assertEqual(len(multi_1_fold0), 2)
         multi_1_mask0 = multi_1.mask_for(multi_1_fold0)

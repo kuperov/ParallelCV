@@ -66,13 +66,23 @@ class CrossValidationScheme(Iterable):
         """Number of CV folds in this scheme."""
         raise NotImplementedError()
 
-    def pred_index_array(self) -> jnp.DeviceArray:
-        """Generate array of prediction indexes
+    def pred_indexes(self) -> Tuple[jnp.DeviceArray, jnp.DeviceArray]:
+        """Generate list of prediction indexes
 
-        The resulting array has one more dimension than the dependence structure,
-        with axis 0 as the fold.
+        The resulting list has one more dimension than the dependence structure,
+        with "axis 0" as the fold. Numpy and jax don't support jagged arrays, so
+        we also return an array of coordinate counts; users should take the first
+        <count> elements of the coordinate array.
         """
-        return jnp.stack([np.atleast_1d(fold_coord) for fold_coord in self])
+        coord_list = [np.atleast_1d(self.coordinates_for(fold_id)) for fold_id in self]
+        coord_counts = jnp.array([len(cs) for cs in coord_list], dtype=jnp.int32)
+        max_coord_count = max(coord_counts)
+        coord_shape = coord_list[0].shape[1:]
+        index_shape = (self.cv_folds(), max_coord_count) + coord_shape
+        index = np.zeros(shape=index_shape, dtype=np.int32)
+        for i, coords in enumerate(coord_list):
+            index[i, : len(coords), ...] = coord_list[i]
+        return jnp.array(index), coord_counts
 
     def mask_array(self) -> jnp.DeviceArray:
         """Generate array of likelihood contribution masks

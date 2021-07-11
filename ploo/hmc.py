@@ -244,11 +244,7 @@ def cross_validate(
 ) -> Tuple[CrossValidationState, CVHMCState]:
     """Cross validation step.
 
-    Runs inference acros all CV folds, using cross-validated version of model potential.
-
-    For now, we will collect all the MCMC samples. In the future we'll replace
-    the inference loop with something that calculates the objective functions
-    (and diagnostics) we want using online estimators.
+    Runs inference across all CV folds, using cross-validated version of model potential.
 
     :param cv_potential: cross-validation model potential, function of
         (inference parameters, cv_fold)
@@ -288,7 +284,6 @@ def cross_validate(
 
     if retain_draws:
 
-        @jax.jit
         def do_cv():
             # each step operates vector of states (representing a cross-section
             # across chains) and vector of rng keys, one per draw
@@ -320,7 +315,6 @@ def cross_validate(
 
     else:
 
-        @jax.jit
         def do_cv():
             # each step operates vector of states (representing a cross-section
             # across chains) and vector of rng keys, one per draw
@@ -348,7 +342,8 @@ def cross_validate(
             accumulator, _ = lax.scan(one_step, cv_initial_accumulator, draw_keys)
             return accumulator, None
 
-    accumulator, positions = do_cv()
+    j_do_cv = jax.jit(do_cv)
+    accumulator, positions = j_do_cv()
     return accumulator, positions
 
 

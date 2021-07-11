@@ -176,14 +176,18 @@ class _Posterior(az.InferenceData):
             f"using {cv_chains:,} chains..."
         )
         masks = cv_scheme.mask_array()
-        pred_indexes = cv_scheme.pred_index_array()
+        # can't do jagged arrays, so pred_lengths is the number of elements
+        # in each slice of pred_indexes to use
+        pred_indexes, pred_lengths = cv_scheme.pred_indexes()
 
         def potential(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
             return self.model.cv_potential(inf_params, masks[cv_fold])
 
         def log_cond_pred(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
             model_params, _ = self.model.inverse_transform_log_det(inf_params)
-            return self.model.log_cond_pred(model_params, pred_indexes[cv_fold])
+            pred_length = pred_lengths[cv_fold]
+            pred_index_subset = pred_indexes[cv_fold][:pred_length]
+            return self.model.log_cond_pred(model_params, pred_index_subset)
 
         accumulator, states = cross_validate(
             potential,
@@ -273,6 +277,12 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         self.accumulator = accumulator
         self.states = states
         self.scheme = scheme
+        chain_elpds = self.accumulator.sum_log_pred_dens / self.draws
+        self.fold_elpds = np.zeros(shape=self.folds)
+        chns = self.chains
+        for i, chain_contrib in enumerate(chain_elpds):
+            self.fold_elpds[i // chns] += chain_contrib
+        self.fold_elpds /= chns
 
     @property
     def elpd(self):
@@ -280,13 +290,8 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         return float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
 
     @property
-    def fold_elpds(self):
-        """elpd estimates for each fold"""
-        return self.accumulator.sum_log_pred_dens / self.draws
-
-    @property
     def elpd_se(self):
-        """s.e. of elpd estimates"""
+        """s.e. of elpd estimates - makes flawed assumption of fold independence"""
         return float(jnp.std(self.fold_elpds) / jnp.sqrt(self.folds))
 
     @property
