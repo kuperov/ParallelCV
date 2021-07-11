@@ -113,7 +113,7 @@ class RadonCountyIntercept(Model):
         beta_prior = st.norm.logpdf(beta, loc=0.0, scale=10.0)
         lprior = jnp.sum(alpha_prior) + sigma_prior + beta_prior
         mu = alpha[self.county_index] + beta * self.floor_measure  # cond. mean
-        llik = st.norm.logpdf((self.log_radon - mu) / sigma_y, loc=0.0, scale=1.0)
+        llik = st.norm.logpdf(self.log_radon, loc=mu, scale=sigma_y)
         return lprior, llik
 
     def log_cond_pred(
@@ -123,9 +123,7 @@ class RadonCountyIntercept(Model):
         sigma_y = model_params["sigma_y"]
         beta = model_params["beta"]
         mu = alpha[self.county_index[coords]] + beta * self.floor_measure[coords]
-        log_pred = st.norm.logpdf(
-            (self.log_radon[coords] - mu) / sigma_y, loc=0, scale=1.0
-        )
+        log_pred = st.norm.logpdf(self.log_radon[coords], loc=mu, scale=sigma_y)
         return jnp.mean(log_pred)
 
     def initial_value(self) -> ModelParams:
