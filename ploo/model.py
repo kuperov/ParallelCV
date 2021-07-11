@@ -19,7 +19,6 @@ from jax import random, vmap
 from scipy import stats as sst
 from tabulate import tabulate
 
-from .cv import CrossValidationScheme, cv_factory
 from .hmc import (
     CrossValidationState,
     InfParams,
@@ -28,6 +27,7 @@ from .hmc import (
     full_data_inference,
     warmup,
 )
+from .schemes import CrossValidationScheme, cv_factory
 from .statistics import ess, split_rhat
 from .util import Timer
 
@@ -313,11 +313,21 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         self.accumulator = accumulator
         self.states = states
         self.scheme = scheme
-        self.elpd = float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
-        self.elpd_se = float(
-            jnp.std(self.accumulator.sum_log_pred_dens / self.draws)
-            / jnp.sqrt(self.draws)
-        )
+
+    @property
+    def elpd(self):
+        """Mean elpd across all folds"""
+        return float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
+
+    @property
+    def fold_elpds(self):
+        """elpd estimates for each fold"""
+        return self.accumulator.sum_log_pred_dens / self.draws
+
+    @property
+    def elpd_se(self):
+        """s.e. of elpd estimates"""
+        return float(jnp.std(self.fold_elpds) / jnp.sqrt(self.folds))
 
     @property
     def model(self) -> "Model":

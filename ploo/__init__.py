@@ -50,6 +50,6 @@ Class diagram, like it's 2005::
 
 # flake8: noqa
 from .compare import compare
-from .cv import LFO, LGO, LOO, KFold
 from .hmc import WarmupResults, warmup
 from .model import Model
+from .schemes import LFO, LGO, LOO, KFold

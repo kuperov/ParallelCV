@@ -11,7 +11,7 @@ import numpy as np
 from jax import random
 
 from ploo import LFO, LOO, KFold
-from ploo.cv import LGO
+from ploo.schemes import LGO
 
 
 class TestCrossValidation(TestCase):
