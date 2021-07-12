@@ -12,6 +12,7 @@ import arviz as az
 import chex
 import matplotlib.pyplot as plt
 import numpy as np
+from jax import lax
 from jax import numpy as jnp
 from jax import random, vmap
 from scipy import stats as sst
@@ -141,7 +142,7 @@ class _Posterior(az.InferenceData):
 
     def cross_validate(
         self,
-        cv_scheme: Union[str, CrossValidationScheme] = "LOO",
+        scheme: Union[str, CrossValidationScheme] = "LOO",
         retain_draws=False,
         rng_key: chex.ArrayDevice = None,
         **kwargs,
@@ -153,7 +154,7 @@ class _Posterior(az.InferenceData):
         memory on your GPU. Even moderately-sized problems can exhaust a GPU's memory
         quite quickly.
 
-        :param cv_scheme: name of cross-validation scheme to apply
+        :param scheme: name of cross-validation scheme to apply
         :param retain_draws: if true, retain MCMC draws
         :param rng_key: random generator state
         :param kwargs: arguments to pass to cross-validation scheme constructor
@@ -165,41 +166,44 @@ class _Posterior(az.InferenceData):
         # shape from a likelihood evaluation: wasteful but reduces mistakes
         _, example_ll = self.model.log_prior_likelihood(self.model.initial_value())
         cv_shape = example_ll.shape
-        if isinstance(cv_scheme, str):
-            cv_scheme = cv_factory(cv_scheme)(shape=cv_shape, **kwargs)
-        cv_chains = self.chains * cv_scheme.cv_folds()
-        title = f"Brute-force {cv_scheme.name}: {self.model.name}"
+        if isinstance(scheme, str):
+            scheme = cv_factory(scheme)(shape=cv_shape, **kwargs)
+        cv_chains = self.chains * scheme.cv_folds()
+        title = f"Brute-force {scheme.name}: {self.model.name}"
         print(title)
         print("=" * len(title))
         print(
-            f"Fitting posteriors for {cv_scheme.cv_folds():,} folds "
+            f"Fitting posteriors for {scheme.cv_folds():,} folds "
             f"using {cv_chains:,} chains..."
         )
-        masks = cv_scheme.mask_array()
+        masks = scheme.mask_array()
         # can't do jagged arrays, so pred_lengths is the number of elements
-        # in each slice of pred_indexes to use
-        pred_indexes, pred_lengths = cv_scheme.pred_indexes()
+        # in each slice along axis 0 of pred_indexes to use
+        pred_indexes, pred_lengths = scheme.pred_indexes()
 
         def potential(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
             return self.model.cv_potential(inf_params, masks[cv_fold])
 
-        def log_cond_pred(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
+        def log_cond_pred(
+            inf_params: InfParams, cv_fold: int, num_coords: int
+        ) -> chex.ArrayDevice:
             model_params, _ = self.model.inverse_transform_log_det(inf_params)
-            pred_length = pred_lengths[cv_fold]
-            pred_index_subset = pred_indexes[cv_fold][:pred_length]
+            pred_index_subset = lax.dynamic_slice(
+                pred_indexes, (cv_fold, 0, 0), (1, num_coords, 1)
+            )
             return self.model.log_cond_pred(model_params, pred_index_subset)
 
         accumulator, states = cross_validate(
             potential,
             log_cond_pred,
             self.warmup_res,
-            cv_scheme.cv_folds(),
+            scheme.cv_folds(),
             self.draws,
             self.chains,
             rng_key,
             retain_draws,
         )
-        accumulator.divergence_count.block_until_ready()
+        accumulator.divergence_count.block_until_ready()  # for accurate iter rate
         divergent_chains = jnp.sum(accumulator.divergence_count > 0)
         if divergent_chains > 0:
             print(f"      WARNING: {divergent_chains} divergent chain(s).")
@@ -224,7 +228,7 @@ class _Posterior(az.InferenceData):
         else:
             rearranged_draws = None
 
-        return CrossValidation(self, accumulator, rearranged_draws, scheme=cv_scheme)
+        return CrossValidation(self, accumulator, rearranged_draws, scheme=scheme)
 
     def __getattribute__(self, name: str) -> Any:
         """If the user invokes a plot_* function, delegate to ArviZ."""
