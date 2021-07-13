@@ -350,9 +350,8 @@ def cross_validate(
 def new_cv_state(position: PyTree, potential_fn: Callable, cv_fold: int) -> CVHMCState:
     """Initial cross-validation state
 
-    Keyword arguments
-        position:     starting position
-        potential_fn: model potential
+    :param position: starting position
+    :param potential_fn: model potential
     """
     potential_energy, potential_energy_grad = jax.value_and_grad(potential_fn)(
         position, cv_fold
@@ -421,20 +420,15 @@ def cv_kernel(
     The CV HMC kernel takes one MCMC step (comprising a fixed number of integrator
     steps), advancing from one CVHMC state to another.
 
-    Args:
-        potential_fn:          potential function for model, takes a parameter as a
-                               dict and cross-validation fold number
-        step_size:             HMC step size
-        inverse_mass_matrix:   HMC inv mass matrix. If diagonal, a 1D array, or a
-                               square 2D array.
-        num_integration_steps: number of steps to run the integrator for each proposal
-        divergence_threshold:  minimum change in energy to declare a divergence
-
-    Returns:
-        Callable: HMC kernel as a function
-
-    Raises:
-        ValueError: if inverse_mass_matrix is of incorrect shape.
+    :param potential_fn: potential function for model, takes a parameter as a
+        dict and cross-validation fold number
+    :param step_size: HMC step size
+    :param inverse_mass_matrix: HMC inv mass matrix. If diagonal, a 1D array, or a
+        square 2D array.
+    :param num_integration_steps: number of steps to run the integrator for each proposal
+    :param divergence_threshold: minimum change in energy to declare a divergence
+    :raises: ValueError: if inverse_mass_matrix is of incorrect shape.
+    :return: Callable: HMC kernel as a function
     """
 
     ndim = jnp.ndim(inverse_mass_matrix)
