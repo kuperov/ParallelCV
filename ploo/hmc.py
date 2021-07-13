@@ -243,8 +243,8 @@ def cross_validate(
     retain_draws: bool = False,
 ) -> Tuple[CrossValidationState, CVHMCState]:
     """Cross validation step.
-
-    Runs inference across all CV folds, using cross-validated version of model potential.
+    Runs inference across all CV folds, using cross-validated version of model
+    potential.
 
     :param cv_potential: cross-validation model potential, function of
         (inference parameters, cv_fold)
