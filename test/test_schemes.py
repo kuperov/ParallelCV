@@ -24,7 +24,7 @@ class TestCrossValidationSchemes(TestCase):
         self.assertEqual(linear_1.folds, 100)
         self.assertEqual(list(range(100)), list(linear_1))
         linear_1_coords, lengths = linear_1.pred_indexes()
-        self.assertEqual(linear_1_coords.shape, (100, 1))
+        self.assertEqual(linear_1_coords.shape, (100, 1, 1))
         self.assertClose(lengths, np.array([1] * 100))
         linear_1_mask0 = linear_1.mask_for(next(iter(linear_1)))
         self.assertEqual(linear_1_mask0.shape, (100,))
@@ -50,7 +50,6 @@ class TestCrossValidationSchemes(TestCase):
         self.assertEqual(multi_1_coords.shape, (600, 1, 2))  # folds*npred*data dim
         self.assertClose(lengths, [1] * 600)
         multi_1_fold0 = next(iter(multi_1))
-        self.assertEqual(len(multi_1_fold0), 2)
         multi_1_mask0 = multi_1.mask_for(multi_1_fold0)
         self.assertEqual(multi_1_mask0.shape, (20, 30))
         self.assertEqual(np.sum(multi_1_mask0), multi_1.folds - 1)
@@ -103,12 +102,12 @@ class TestCrossValidationSchemes(TestCase):
         grps = [1] * 5 + [2] * 3 + [3] * 2
         lgo_1 = LGO(10, grps)
         self.assertEqual(lgo_1.shape, (10,))
-        self.assertEqual(lgo_1.cv_folds(), 3)
+        self.assertEqual(lgo_1.folds, 3)
         lgo_1_summ = lgo_1.mask_array()
         self.assertClose(lgo_1_summ[0][0:3], [0] * 3)
         self.assertEqual(np.sum(lgo_1_summ), 3 * 10 - 10)
         lgo_1_coords, lgo_1_lengths = lgo_1.pred_indexes()
-        self.assertEqual(lgo_1_coords.shape, (3, 5))  # groups*elements*data dim
+        self.assertEqual(lgo_1_coords.shape, (3, 5, 1))  # groups*elements*data dim
         self.assertEqual(lgo_1_lengths.shape, (3,))
 
 

@@ -6,19 +6,20 @@ Alex Cooper <alex@acooper.org>
 Diagnostic statistics for MCMC chains.
 """
 
+import chex
 from jax import lax
 from jax import numpy as jnp
 from scipy.fftpack import next_fast_len
 
 
-def _split_chains(samples: jnp.DeviceArray) -> jnp.DeviceArray:
+def _split_chains(samples: chex.ArrayDevice) -> chex.ArrayDevice:
     """Split chains in half, doubling number of chains and halving draws"""
     _, N = samples.shape
     return jnp.vstack([samples[:, : (N // 2)], samples[:, (N // 2) :]])
 
 
-def split_rhat(samples: jnp.DeviceArray) -> jnp.DeviceArray:
-    r"""Computes split-R̂ per Gelman et al (2013)
+def split_rhat(samples: chex.ArrayDevice) -> chex.ArrayDevice:
+    r"""Computes split-R̂ per Gelman et al (2013).
 
     Let the between-chains variance :math:`B` and within-chain variance :math:`W`
     for draws :math:`\theta^{(nm)}` be given by
@@ -37,11 +38,9 @@ def split_rhat(samples: jnp.DeviceArray) -> jnp.DeviceArray:
 
          \hat{R} = \sqrt{\frac{N-1}{N} + \frac{B}{NW}}
 
-    Args:
-        samples: 2D array of samples θ⁽ⁿᵐ⁾ (chains m on axis 0, draw n axis 1)
+    :param samples: 2D array of samples θ⁽ⁿᵐ⁾ (chains m on axis 0, draw n axis 1)
 
-    Returns:
-        Estimate of the ratio :math:`\hat{R}`
+    :return: Estimate of the ratio :math:`\hat{R}`
     """
     assert len(samples.shape) == 2, "Samples should be 2D (scalars only)"
     ssamples = _split_chains(samples)
@@ -64,11 +63,9 @@ def chain_variance(samples):
          W = \frac{1}{M}\sum_{m=1}^M \left[\frac{1}{N-1}\sum_{m=1}^N
          \left(\theta^{(nm)}-\bar{\theta}^{(\cdot m)}\right)\right]^2
 
-    Args:
-        samples: 2D array of samples θ⁽ⁿᵐ⁾ (chains m on axis 0, draw n axis 1)
+    :param samples: 2D array of samples θ⁽ⁿᵐ⁾ (chains m on axis 0, draw n axis 1)
 
-    Returns:
-        (B, W, var_plus) tuple
+    :return: (B, W, var_plus) tuple
     """
     M, N = samples.shape
     theta_m = jnp.mean(samples, axis=1)  # chain averages θ⁽⋅ᵐ⁾
@@ -79,7 +76,7 @@ def chain_variance(samples):
     return between_var, within_var, var_est
 
 
-def ess(x: jnp.DeviceArray, relative=False):
+def ess(x: chex.ArrayDevice, relative=False):
     r"""Effective sample size as described in Vehtari et al 2021 and Geyer 2011.
 
     Adapted for JAX from pyro implementation, see:
@@ -87,9 +84,8 @@ def ess(x: jnp.DeviceArray, relative=False):
     Some parts also adapted from ArviZ, see:
     https://github.com/arviz-devs/arviz/blob/8115c7a1b8046797229b654c8389b7c26769aa82/arviz/stats/diagnostics.py#L65
 
-    Args:
-        samples: 2D array of samples
-        relative: if true return relative measure
+    :param samples: 2D array of samples
+    :param relative: if true return relative measure
     """  # noqa: B950
     assert x.ndim >= 2
     assert x.shape[1] >= 2

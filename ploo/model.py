@@ -168,12 +168,12 @@ class _Posterior(az.InferenceData):
         cv_shape = example_ll.shape
         if isinstance(scheme, str):
             scheme = cv_factory(scheme)(shape=cv_shape, **kwargs)
-        cv_chains = self.chains * scheme.cv_folds()
+        cv_chains = self.chains * scheme.folds
         title = f"Brute-force {scheme.name}: {self.model.name}"
         print(title)
         print("=" * len(title))
         print(
-            f"Fitting posteriors for {scheme.cv_folds():,} folds "
+            f"Fitting posteriors for {scheme.folds:,} folds "
             f"using {cv_chains:,} chains..."
         )
         masks = scheme.mask_array()
@@ -197,7 +197,7 @@ class _Posterior(az.InferenceData):
             potential,
             log_cond_pred,
             self.warmup_res,
-            scheme.cv_folds(),
+            scheme.folds,
             self.draws,
             self.chains,
             rng_key,
@@ -316,7 +316,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
     @property
     def folds(self) -> int:
         """Number of CV folds in this CV scheme"""
-        return self.scheme.cv_folds()
+        return self.scheme.folds
 
     def __lt__(self, cv):
         return self.elpd.__gt__(cv.elpd)  # note change of sign, want largest first
@@ -331,7 +331,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         """
         if not self.states:
             raise Exception("States not retained. Cannot construct ArviZ object.")
-        fold_indexes = jnp.arange(self.scheme.cv_folds())
+        fold_indexes = jnp.arange(self.scheme.folds)
         chain_folds = jnp.repeat(fold_indexes, self.chains)
         chain_i = chain_folds == cv_fold
         if not jnp.sum(chain_i):
