@@ -127,8 +127,6 @@ class _Posterior(az.InferenceData):
             "75%",
             "95%",
             "99%",
-            "R̂ᵇᵘˡᵏ",
-            "Sᵉᶠᶠ",
         ]
         table_quantiles = jnp.array([0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
 
@@ -164,12 +162,65 @@ class _Posterior(az.InferenceData):
 
         :return: CrossValidation object containing all CV posteriors
         """
-        rng_key = rng_key or self.rng_key
+        return CrossValidation(
+            self, scheme=scheme, retain_draws=retain_draws, rng_key=rng_key, **kwargs
+        )
+
+    def __getattribute__(self, name: str) -> Any:
+        """If the user invokes a plot_* function, delegate to ArviZ."""
+        if name in _ARVIZ_METHODS:
+            delegate_to = getattr(az, name)
+
+            def plot_function(*args, **kwargs):
+                return delegate_to.__call__(self, *args, **kwargs)
+
+            # return copy of ArviZ docstring with some tweaks
+            plot_function.__doc__ = (
+                (
+                    f"**Note: function delegated to ArviZ. See: help(arviz.{name})**"
+                    f"\n\n{delegate_to.__doc__}"
+                )
+                .replace(f"{name}(data:", f"{name}(self:")
+                .replace("data: obj", "self:")
+            )
+            return plot_function
+        # not an ArviZ method; use standard attr resolution
+        return super().__getattribute__(name)
+
+    def __dir__(self) -> Iterable[str]:
+        parent_dir = super().__dir__()
+        return parent_dir + _ARVIZ_METHODS
+
+
+class CrossValidation:  # pylint: disable=too-many-instance-attributes
+    """Model cross-validated
+
+    This class contains summary statistics, and optionally draws, for all CV
+    posteriors.
+
+    :param post: full-data posterior
+    :param scheme: cross-validation scheme. Can be either a class name
+        or an instance of CrossValidationScheme
+    :param retain_draws: if True, keep full traces for all MCMC draws
+    :param rng_key: random number generator state
+    :param kwargs: arguments to pass to scheme constructor
+    """
+
+    def __init__(
+        self,
+        post: _Posterior,
+        scheme: Union[CrossValidationScheme, str],
+        retain_draws: bool,
+        rng_key: chex.ArrayDevice = None,
+        **kwargs,
+    ) -> None:
+        self.post = post
         timer = Timer()
         _, example_ll = self.model.log_prior_likelihood(self.model.initial_value())
         cv_shape = example_ll.shape
         if isinstance(scheme, str):
             scheme = cv_factory(scheme)(shape=cv_shape, **kwargs)
+        self.scheme = scheme
         cv_chains = self.chains * scheme.folds
         title = f"Brute-force {scheme.name}: {self.model.name}"
         print(title)
@@ -179,8 +230,6 @@ class _Posterior(az.InferenceData):
             f"using {cv_chains:,} chains..."
         )
         masks = scheme.mask_array()
-        # can't do jagged arrays, so pred_lengths is the number of elements
-        # in each slice along axis 0 of pred_indexes to use
         fold_preds = scheme.pred_indexes()
 
         def potential(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
@@ -193,31 +242,22 @@ class _Posterior(az.InferenceData):
             log_lik = self.model.log_cond_pred(model_params, coords)  # covariates?
             return jnp.mean(log_lik * mask)
 
-        chain_shape = (scheme.folds, self.chains)
-        # chain_indexes = jnp.arange(chains)
-        fold_indexes = jnp.arange(scheme.folds)
-
-        chain_starting_values = jax.tree_map(
-            lambda chns: jnp.repeat(jnp.expand_dims(chns, 0), scheme.folds, 0),
-            self.warmup_res.starting_values,
+        fold_initial_state = vmap(new_cv_state, (1, None))
+        cv_initial_states = vmap(fold_initial_state, (0, None, 0))(
+            post.warmup_res.starting_values, potential, jnp.arange(scheme.folds)
         )
 
-        cv_initial_states = vmap(new_cv_state, ((0, 1), None, (0, 1)))(
-            chain_starting_values,
-            potential,
-            jnp.repeat(jnp.expand_dims(fold_indexes, 1), 8, 1),
-        )
         cv_initial_accumulator = CrossValidationState(
-            divergence_count=jnp.zeros(chain_shape),
-            accepted_count=jnp.zeros(chain_shape),
-            sum_log_pred_dens=jnp.zeros(chain_shape),
+            divergence_count=jnp.zeros((scheme.folds, self.chains)),
+            accepted_count=jnp.zeros((scheme.folds, self.chains)),
+            sum_log_pred_dens=jnp.zeros((scheme.folds, self.chains)),
             hmc_state=cv_initial_states,
         )
         kernel = cv_kernel(
             potential,
-            self.warmup_res.step_size,
-            self.warmup_res.mass_matrix,
-            self.warmup_res.int_steps,
+            post.warmup_res.step_size,
+            post.warmup_res.mass_matrix,
+            post.warmup_res.int_steps,
         )
 
         def do_cv():
@@ -226,7 +266,7 @@ class _Posterior(az.InferenceData):
             def one_step(
                 cv_state: CrossValidationState, rng_subkey: chex.ArrayDevice
             ) -> Tuple[CrossValidationState, CVHMCState]:
-                rng_keys = random.split(rng_subkey, chain_shape)
+                rng_keys = random.split(rng_subkey, (scheme.folds, self.chains))
                 # markov kernel function for a single chain number, across all folds
                 kernel_c = vmap(kernel, in_axes=[0, 0])
                 # markov kernel function for all chain-folds
@@ -239,13 +279,15 @@ class _Posterior(az.InferenceData):
                 pred = pred_cf(
                     hmc_state.position, fold_preds.coordinates, fold_preds.length
                 )
-
+                # update online estimators
                 div_count = cv_state.divergence_count + 1.0 * hmc_info.is_divergent
                 accept_count = cv_state.accepted_count + 1.0 * hmc_info.is_accepted
+                log_pred_cumsum = cv_state.sum_log_pred_dens + pred
+                # state to pass to next iteration
                 updated_state = CrossValidationState(
                     divergence_count=div_count,
                     accepted_count=accept_count,
-                    sum_log_pred_dens=cv_state.sum_log_pred_dens + pred,
+                    sum_log_pred_dens=log_pred_cumsum,
                     hmc_state=hmc_state,
                 )
                 return updated_state, hmc_state.position
@@ -287,71 +329,17 @@ class _Posterior(az.InferenceData):
             position_model = vmap(inverse_transform)(states)
             # want axes to be (chain, draws, ... <variable dims> ...)
             rearranged_draws = {
-                var: jnp.swapaxes(draws, axis1=0, axis2=1)
+                var: jnp.swapaxes(draws, axis1=0, axis2=2)
                 for (var, draws) in position_model.items()
             }
         else:
             rearranged_draws = None
 
-        return CrossValidation(self, accumulator, rearranged_draws, scheme=scheme)
-
-    def __getattribute__(self, name: str) -> Any:
-        """If the user invokes a plot_* function, delegate to ArviZ."""
-        if name in _ARVIZ_METHODS:
-            delegate_to = getattr(az, name)
-
-            def plot_function(*args, **kwargs):
-                return delegate_to.__call__(self, *args, **kwargs)
-
-            # return copy of ArviZ docstring with some tweaks
-            plot_function.__doc__ = (
-                (
-                    f"**Note: function delegated to ArviZ. See: help(arviz.{name})**"
-                    f"\n\n{delegate_to.__doc__}"
-                )
-                .replace(f"{name}(data:", f"{name}(self:")
-                .replace("data: obj", "self:")
-            )
-            return plot_function
-        # not an ArviZ method; use standard attr resolution
-        return super().__getattribute__(name)
-
-    def __dir__(self) -> Iterable[str]:
-        parent_dir = super().__dir__()
-        return parent_dir + _ARVIZ_METHODS
-
-
-class CrossValidation:  # pylint: disable=too-many-instance-attributes
-    """Model cross-validated
-
-    This class contains draws for all the CV posteriors.
-    """
-
-    def __init__(
-        self,
-        post: _Posterior,
-        accumulator: CrossValidationState,
-        states: Dict[str, chex.ArrayDevice],
-        scheme: CrossValidationScheme,
-    ) -> None:
-        """Create a new CrossValidation instance
-
-        :param post: full-data posterior
-        :param accumulator: state accumulator used during inference step
-        :param states: MCMC states, as dict keyed by parameter
-        :param folds: number of cross-validation folds
-        :param fold_indexes: indexes of cross-validation folds
-        """
-        self.post = post
         self.accumulator = accumulator
-        self.states = states
-        self.scheme = scheme
-        chain_elpds = self.accumulator.sum_log_pred_dens / self.draws
-        self.fold_elpds = np.zeros(shape=self.folds)
-        chns = self.chains
-        for i, chain_contrib in enumerate(chain_elpds):
-            self.fold_elpds[i // chns] += chain_contrib
-        self.fold_elpds /= chns
+        self.states = rearranged_draws
+        self.fold_elpds = (
+            np.mean(self.accumulator.sum_log_pred_dens, axis=1) / self.draws
+        )
 
     @property
     def elpd(self):
