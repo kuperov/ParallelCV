@@ -16,6 +16,33 @@ from jax import random
 CVFold = int
 
 
+@chex.dataclass
+class PredCoords:
+    """Set of (possibly unbalanced) prediction coordinates
+
+    This class contains a set of prediction coordinates as a "jagged array" implemented
+    using a jax array and an array of masks to apply to the predictions, with "1" being
+    include and "0" being exclude. We took this approach because Alex couldn't work out
+    how to dynamically slice the coordinate array within the inference loop, so we just
+    perform a static number of predictions for each group, and filter out the ones that
+    aren't needed.
+
+    The coords array axes are:
+
+      * axis0: fold number
+      * axis1: deleted cases
+      * axis2: case coordinates, wrt to log likelihood contribution array
+
+    The masks array has shape coords.shape[:2], and is defined by code equivalent to:
+
+        masks[i] = jnp.array(1.0 * jnp.arange(coords.shape[1]) <= lengths[i])
+    """
+
+    coords: chex.ArrayDevice
+    lengths: chex.ArrayDevice
+    masks: chex.ArrayDevice
+
+
 class CrossValidationScheme(Iterable):
     """Abstract class representing a structured cross-validation.
 
@@ -63,12 +90,13 @@ class CrossValidationScheme(Iterable):
         """Number of CV folds in this scheme."""
         return self.num_folds
 
-    def pred_indexes(self) -> Tuple[chex.ArrayDevice, chex.ArrayDevice]:
+    def pred_indexes(self) -> PredCoords:
         """Generate list of prediction indexes.
-        The resulting list has one more dimension than the dependence structure,
-        with "axis 0" as the fold. Numpy and jax don't support jagged arrays, so
-        we also return an array of coordinate counts; users should take the first
-        <count> elements of the coordinate array.
+        The resulting list has 3 dimensions than the dependence structure,
+        with axis 0 as the fold, axis 1 as the deleted cases, and axis 2 as the
+        case coordinates. Numpy and jax don't support jagged arrays, so the
+        returned object also contains an array of coordinate counts; users should
+        take the first <count> elements of the coordinate array.
         """
         coord_list = [np.atleast_1d(self.coordinates_for(fold_id)) for fold_id in self]
         coord_counts = jnp.array([len(cs) for cs in coord_list], dtype=jnp.int32)
@@ -78,7 +106,11 @@ class CrossValidationScheme(Iterable):
         index = np.zeros(shape=index_shape, dtype=np.int32)
         for i, coords in enumerate(coord_list):
             index[i, : len(coords), ...] = coord_list[i]
-        return jnp.array(index), coord_counts
+        masks = jnp.vstack(
+            jnp.array(1.0 * (jnp.arange(index.shape[1]) <= coord_counts[i]))
+            for i in range(self.folds)
+        )
+        return PredCoords(coords=jnp.array(index), lengths=coord_counts, masks=masks)
 
     def mask_array(self) -> chex.ArrayDevice:
         """Generate array of likelihood contribution masks.
