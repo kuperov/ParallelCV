@@ -69,9 +69,11 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         def log_cond_pred(
             inf_params: InfParams, coords: chex.ArrayDevice, mask: chex.ArrayDevice
         ) -> chex.ArrayDevice:
+            # Log conditional predictive in terms of unconstrained params.
+            # Should be applied to ONE coordinate and mask; we vectorize with JAX
             model_params, _ = self.model.inverse_transform_log_det(inf_params)
             log_lik = self.model.log_cond_pred(model_params, coords)  # covariates?
-            return jnp.mean(log_lik * mask)
+            return log_lik * mask
 
         fold_initial_state = vmap(new_cv_state, (0, None, None))  # map over chains
         cv_initial_states = vmap(fold_initial_state, (None, None, 0))(  # map over folds
@@ -109,6 +111,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
                 pred_c = vmap(log_cond_pred, in_axes=[0, 0, 0])
                 # conditional predictive for all chain-folds
                 pred_cf = vmap(pred_c, in_axes=(1, None, None))
+                # FIXME: vectorize over coordinates too
                 pred = pred_cf(hmc_state.position, fold_preds.coords, fold_preds.masks)
                 # update online estimators
                 div_count = cv_state.divergence_count + 1.0 * hmc_info.is_divergent
