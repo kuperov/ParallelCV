@@ -19,4 +19,36 @@ def f(x, y):
 f_row = jax.vmap(f, in_axes=[0, 0])
 f_mat = jax.vmap(f_row, in_axes=[1, 1])
 
-f_mat(X, Y)
+result1 = f_mat(X, Y)
+
+
+# ----------------------------------------------------------------------------
+
+# over 1d arrays
+
+W = jnp.arange(10)
+Z = jnp.arange(10, 20)
+
+# same f as before
+
+f1 = jax.vmap(f, in_axes=[0, None])
+f2 = jax.vmap(f1, in_axes=[None, 0])
+result2 = f2(W, Z)
+
+# ----------------------------------------------------------------------------
+
+# over dicts
+
+param = {'a': jnp.arange(10), 'b': jnp.arange(10, 20)}
+
+def g(p):
+    return p['a'] + p['b']
+
+result3 = jax.vmap(g, 0, 0)(param)
+
+def h(p, z):
+    return g(p) + z
+
+h1 = jax.vmap(h, in_axes=[0, None])
+h2 = jax.vmap(h1, in_axes=[None, 0])
+result4 = h2(param, Z)
