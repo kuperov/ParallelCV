@@ -231,127 +231,12 @@ def full_data_inference(
     return accumulator, states
 
 
-# pylint: disable=too-many-arguments
-def cross_validate(
-    cv_potential: Callable,
-    cv_cond_pred: Callable,
-    warmup_res: WarmupResults,
-    cv_folds: int,
-    draws: int,
-    chains: int,
-    rng_key: chex.ArrayDevice,
-    retain_draws: bool = False,
-) -> Tuple[CrossValidationState, CVHMCState]:
-    """Cross validation step.
-    Runs inference across all CV folds, using cross-validated version of model
-    potential.
-
-    :param cv_potential: cross-validation model potential, function of
-        (inference parameters, cv_fold)
-    :param cv_cond_pred: cross-validation conditional predictive density, function of
-        (inference_parameters, cv_fold)
-    :param warmup_res: results from warmup procedure
-    :param cv_folds: number of cross-validation folds
-    :param draws: number of draws per chain
-    :param chains: number of chains per fold
-    :param rng_key: random generator state
-    :param retain_draws: if True, retain MCMC draws from all chains
-    :return: Tuple of :class`CrosssValidationState` (representing the accumulated state
-        across all MCMC draws), and (if `retain_draws==True`) a :class:`CVHMCState`
-        object containing conditional predictive
-    """
-    # assuming 4 chains and a 1-dimensional cross-validation structure,
-    # chain_indexes = [0, 1, 2, 3, 0, 1, 2, 3, 0, ...]
-    chain_indexes = jnp.concatenate([jnp.arange(chains)] * cv_folds)
-    # fold_indexes  = [0, 0, 0, 0, 1, 1, 1, 1, 2, ...]
-    fold_indexes = jnp.repeat(jnp.arange(cv_folds), chains)
-    assert chain_indexes.shape == fold_indexes.shape
-    chain_starting_values = {
-        k: sv[chain_indexes] for (k, sv) in warmup_res.starting_values.items()
-    }
-    cv_initial_states = vmap(new_cv_state, (0, None, 0))(
-        chain_starting_values, cv_potential, fold_indexes
-    )
-    cv_initial_accumulator = CrossValidationState(
-        divergence_count=jnp.zeros(fold_indexes.shape),
-        accepted_count=jnp.zeros(fold_indexes.shape),
-        sum_log_pred_dens=jnp.zeros(fold_indexes.shape),
-        hmc_state=cv_initial_states,
-    )
-    kernel = cv_kernel(
-        cv_potential, warmup_res.step_size, warmup_res.mass_matrix, warmup_res.int_steps
-    )
-
-    if retain_draws:
-
-        def do_cv():
-            # each step operates vector of states (representing a cross-section
-            # across chains) and vector of rng keys, one per draw
-            def one_step(
-                cv_state: CrossValidationState, rng_subkey: chex.ArrayDevice
-            ) -> Tuple[CrossValidationState, CVHMCState]:
-                keys = random.split(rng_subkey, chains * cv_folds)
-                hmc_state, hmc_info = vmap(kernel)(keys, cv_state.hmc_state)
-                cond_pred = vmap(cv_cond_pred)(hmc_state.position, hmc_state.cv_fold)
-                div_count = cv_state.divergence_count + jnp.where(
-                    hmc_info.is_divergent, 1, 0
-                )
-                accept_count = cv_state.accepted_count + jnp.where(
-                    hmc_info.is_accepted, 1, 0
-                )
-                updated_state = CrossValidationState(
-                    divergence_count=div_count,
-                    accepted_count=accept_count,
-                    sum_log_pred_dens=cv_state.sum_log_pred_dens + cond_pred,
-                    hmc_state=hmc_state,
-                )
-                return updated_state, hmc_state.position
-
-            draw_keys = random.split(rng_key, draws)
-            accumulator, positions = lax.scan(
-                one_step, cv_initial_accumulator, draw_keys
-            )
-            return accumulator, positions
-
-    else:
-
-        def do_cv():
-            # each step operates vector of states (representing a cross-section
-            # across chains) and vector of rng keys, one per draw
-            def one_step(
-                cv_state: CrossValidationState, rng_subkey: chex.ArrayDevice
-            ) -> Tuple[CrossValidationState, CVHMCState]:
-                keys = random.split(rng_subkey, chains * cv_folds)
-                hmc_state, hmc_info = vmap(kernel)(keys, cv_state.hmc_state)
-                cond_pred = vmap(cv_cond_pred)(hmc_state.position, hmc_state.cv_fold)
-                div_count = cv_state.divergence_count + jnp.where(
-                    hmc_info.is_divergent, 1, 0
-                )
-                accept_count = cv_state.accepted_count + jnp.where(
-                    hmc_info.is_accepted, 1, 0
-                )
-                updated_state = CrossValidationState(
-                    divergence_count=div_count,
-                    accepted_count=accept_count,
-                    sum_log_pred_dens=cv_state.sum_log_pred_dens + cond_pred,
-                    hmc_state=hmc_state,
-                )
-                return updated_state, None
-
-            draw_keys = random.split(rng_key, draws)
-            accumulator, _ = lax.scan(one_step, cv_initial_accumulator, draw_keys)
-            return accumulator, None
-
-    j_do_cv = jax.jit(do_cv)
-    accumulator, positions = j_do_cv()
-    return accumulator, positions
-
-
 def new_cv_state(position: PyTree, potential_fn: Callable, cv_fold: int) -> CVHMCState:
     """Initial cross-validation state
 
     :param position: starting position
     :param potential_fn: model potential
+    :param cv_fold: index of cross-validation fold
     """
     potential_energy, potential_energy_grad = jax.value_and_grad(potential_fn)(
         position, cv_fold

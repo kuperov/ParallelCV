@@ -13,7 +13,6 @@ from ploo.hmc import (
     CrossValidationState,
     CVHMCState,
     WarmupResults,
-    cross_validate,
     full_data_inference,
     warmup,
 )
@@ -67,34 +66,6 @@ class TestInference(unittest.TestCase):
         self.assertEqual(states.position["mu"].shape, (1000, 4))
         self.assertIsInstance(accum, CrossValidationState)
         self.assertIsInstance(states, CVHMCState)
-
-    def test_cross_validation(self):
-        """Smoke test cross-validation. Better tests in test_model.py"""
-        accumulator, states = cross_validate(
-            cv_potential=self.gauss.cv_potential,
-            cv_cond_pred=self.gauss.log_cond_pred,
-            warmup_res=self.warmup,
-            cv_folds=200,
-            draws=200,
-            chains=2,
-            rng_key=self.rng_key,
-            retain_draws=True,
-        )
-        self.assertIsNotNone(states)
-        self.assertIsNotNone(accumulator)
-
-        accumulator, states = cross_validate(
-            cv_potential=self.gauss.cv_potential,
-            cv_cond_pred=self.gauss.log_cond_pred,
-            warmup_res=self.warmup,
-            cv_folds=200,
-            draws=200,
-            chains=2,
-            rng_key=self.rng_key,
-            retain_draws=False,
-        )
-        self.assertIsNone(states)
-        self.assertIsNotNone(accumulator)
 
 
 if __name__ == "__main__":

@@ -12,5 +12,5 @@ cv = post.cross_validate(scheme=lgo_scheme)
 print(cv)
 
 # so we can download elpds by group and compare with psis
-df = pd.DataFrame({'elpds': cv.fold_elpds})
-df.to_csv('radon_elpds.csv')
+df = pd.DataFrame({"elpds": cv.fold_elpds})
+df.to_csv("radon_elpds.csv")

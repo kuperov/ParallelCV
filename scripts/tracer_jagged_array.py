@@ -35,7 +35,7 @@ initial_state = MarkovState(
 
 jagged_array = JaggedArray(
     params=jnp.stack([jnp.arange(T)] * T),
-    mask=jnp.stack([1.0 * (jnp.arange(T) <= arr_len) for arr_len in range(T)])
+    mask=jnp.stack([1.0 * (jnp.arange(T) <= arr_len) for arr_len in range(T)]),
 )
 
 
@@ -63,7 +63,7 @@ def run_markov_chain(m, retain_draws):
     def one_step_nodraws(states, _rng_key):
         new_state, _ = one_step(states, _rng_key)
         return new_state, None
-    
+
     # we don't actually use these random keys, but scan needs a sequence to map over
     rng_key = jax.random.PRNGKey(seed=42)
     rng_keys = jax.random.split(rng_key, m)
@@ -74,15 +74,12 @@ def run_markov_chain(m, retain_draws):
     return final_state, mc_chain
 
 
-print('starting jit')
-run_markov_chain_j = jax.jit(
-    run_markov_chain,
-    static_argnames=['m', 'retain_draws']
-)
-print('done with jit')
+print("starting jit")
+run_markov_chain_j = jax.jit(run_markov_chain, static_argnames=["m", "retain_draws"])
+print("done with jit")
 state0, chain0 = run_markov_chain_j(M, True)
 state1, chain1 = run_markov_chain_j(M, False)
 
-assert jnp.allclose(chain0[:,0], jnp.arange(1,101))
+assert jnp.allclose(chain0[:, 0], jnp.arange(1, 101))
 assert state0.position[0] == 100
 assert state0.cumsum[4] == 54500

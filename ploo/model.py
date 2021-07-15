@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, Tuple, Union
 
 import arviz as az
 import chex
+import jax
 import matplotlib.pyplot as plt
 import numpy as np
 from jax import lax
@@ -20,10 +21,12 @@ from tabulate import tabulate
 
 from .hmc import (
     CrossValidationState,
+    CVHMCState,
     InfParams,
     WarmupResults,
-    cross_validate,
+    cv_kernel,
     full_data_inference,
+    new_cv_state,
     warmup,
 )
 from .schemes import CrossValidationScheme, cv_factory
@@ -155,7 +158,7 @@ class _Posterior(az.InferenceData):
         quite quickly.
 
         :param scheme: name of cross-validation scheme to apply
-        :param retain_draws: if true, retain MCMC draws
+        :param retain_draws: if true, keep MCMC draws for each chain (use with care!)
         :param rng_key: random generator state
         :param kwargs: arguments to pass to cross-validation scheme constructor
 
@@ -163,7 +166,6 @@ class _Posterior(az.InferenceData):
         """
         rng_key = rng_key or self.rng_key
         timer = Timer()
-        # shape from a likelihood evaluation: wasteful but reduces mistakes
         _, example_ll = self.model.log_prior_likelihood(self.model.initial_value())
         cv_shape = example_ll.shape
         if isinstance(scheme, str):
@@ -179,30 +181,93 @@ class _Posterior(az.InferenceData):
         masks = scheme.mask_array()
         # can't do jagged arrays, so pred_lengths is the number of elements
         # in each slice along axis 0 of pred_indexes to use
-        pred_indexes, pred_lengths = scheme.pred_indexes()
+        fold_preds = scheme.pred_indexes()
 
         def potential(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
             return self.model.cv_potential(inf_params, masks[cv_fold])
 
         def log_cond_pred(
-            inf_params: InfParams, cv_fold: int, num_coords: int
+            inf_params: InfParams, coords: chex.ArrayDevice, mask: chex.ArrayDevice
         ) -> chex.ArrayDevice:
             model_params, _ = self.model.inverse_transform_log_det(inf_params)
-            pred_index_subset = lax.dynamic_slice(
-                pred_indexes, (cv_fold, 0, 0), (1, num_coords, 1)
-            )
-            return self.model.log_cond_pred(model_params, pred_index_subset)
+            log_lik = self.model.log_cond_pred(model_params, coords)  # covariates?
+            return jnp.mean(log_lik * mask)
 
-        accumulator, states = cross_validate(
-            potential,
-            log_cond_pred,
-            self.warmup_res,
-            scheme.folds,
-            self.draws,
-            self.chains,
-            rng_key,
-            retain_draws,
+        chain_shape = (scheme.folds, self.chains)
+        # chain_indexes = jnp.arange(chains)
+        fold_indexes = jnp.arange(scheme.folds)
+
+        chain_starting_values = jax.tree_map(
+            lambda chns: jnp.repeat(jnp.expand_dims(chns, 0), scheme.folds, 0),
+            self.warmup_res.starting_values,
         )
+
+        cv_initial_states = vmap(new_cv_state, ((0, 1), None, (0, 1)))(
+            chain_starting_values,
+            potential,
+            jnp.repeat(jnp.expand_dims(fold_indexes, 1), 8, 1),
+        )
+        cv_initial_accumulator = CrossValidationState(
+            divergence_count=jnp.zeros(chain_shape),
+            accepted_count=jnp.zeros(chain_shape),
+            sum_log_pred_dens=jnp.zeros(chain_shape),
+            hmc_state=cv_initial_states,
+        )
+        kernel = cv_kernel(
+            potential,
+            self.warmup_res.step_size,
+            self.warmup_res.mass_matrix,
+            self.warmup_res.int_steps,
+        )
+
+        def do_cv():
+            # each step operates vector of states (representing a cross-section
+            # across chains) and vector of rng keys, one per draw
+            def one_step(
+                cv_state: CrossValidationState, rng_subkey: chex.ArrayDevice
+            ) -> Tuple[CrossValidationState, CVHMCState]:
+                rng_keys = random.split(rng_subkey, chain_shape)
+                # markov kernel function for a single chain number, across all folds
+                kernel_c = vmap(kernel, in_axes=[0, 0])
+                # markov kernel function for all chain-folds
+                kernel_cf = vmap(kernel_c, in_axes=[1, 1])
+                hmc_state, hmc_info = kernel_cf(rng_keys, cv_state.hmc_state)
+                # conditional predictive function for a single chain number, all folds
+                pred_c = vmap(log_cond_pred, in_axes=[0, 0, 0])
+                # conditional predictive for all chain-folds
+                pred_cf = vmap(pred_c, in_axes=(1, None, None))
+                pred = pred_cf(
+                    hmc_state.position, fold_preds.coordinates, fold_preds.length
+                )
+
+                div_count = cv_state.divergence_count + 1.0 * hmc_info.is_divergent
+                accept_count = cv_state.accepted_count + 1.0 * hmc_info.is_accepted
+                updated_state = CrossValidationState(
+                    divergence_count=div_count,
+                    accepted_count=accept_count,
+                    sum_log_pred_dens=cv_state.sum_log_pred_dens + pred,
+                    hmc_state=hmc_state,
+                )
+                return updated_state, hmc_state.position
+
+            # this version of one_step used if retain_draws==False
+            def one_step_nodraws(
+                cv_state: CrossValidationState, rng_subkey: chex.ArrayDevice
+            ) -> Tuple[CrossValidationState, CVHMCState]:
+                updated_state, _ = one_step(cv_state=cv_state, rng_subkey=rng_subkey)
+                return updated_state, None
+
+            step_function = one_step if retain_draws else one_step_nodraws
+
+            draw_keys = random.split(rng_key, self.draws)
+            accumulator, positions = lax.scan(
+                step_function, cv_initial_accumulator, draw_keys
+            )
+            return accumulator, positions
+
+        j_do_cv = jax.jit(do_cv)
+        accumulator, states = j_do_cv()
+
         accumulator.divergence_count.block_until_ready()  # for accurate iter rate
         divergent_chains = jnp.sum(accumulator.divergence_count > 0)
         if divergent_chains > 0:
