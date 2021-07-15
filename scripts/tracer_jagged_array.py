@@ -44,9 +44,10 @@ def kernel(curr_state: MarkovState, jag_array: JaggedArray) -> MarkovState:
 
     Args:
         curr_state: state for a *single* position
+        jag_array: definition of jagged array for building cumsum
 
     Returns:
-        updated position
+        updated state
     """
     new_pos = curr_state.position + 1
     increment = jnp.sum(new_pos * jag_array.params * jag_array.mask)
@@ -54,24 +55,31 @@ def kernel(curr_state: MarkovState, jag_array: JaggedArray) -> MarkovState:
     return new_state
 
 
-def run_markov_chain(m):
+def run_markov_chain(m, retain_draws):
     def one_step(states, _rng_key):
         new_states = jax.vmap(kernel)(states, jagged_array)
         return new_states, new_states.position
 
+    def one_step_nodraws(states, _rng_key):
+        new_state, _ = one_step(states, _rng_key)
+        return new_state, None
+    
     # we don't actually use these random keys, but scan needs a sequence to map over
     rng_key = jax.random.PRNGKey(seed=42)
     rng_keys = jax.random.split(rng_key, m)
 
-    final_state, mc_chain = jax.lax.scan(one_step, initial_state, rng_keys)
+    step_function = one_step if retain_draws else one_step_nodraws
+
+    final_state, mc_chain = jax.lax.scan(step_function, initial_state, rng_keys)
     return final_state, mc_chain
 
 
 print('starting jit')
-run_markov_chain_j = jax.jit(run_markov_chain, static_argnames='m')
+run_markov_chain_j = jax.jit(run_markov_chain, static_argnames=['m', 'retain_draws'])
 print('done with jit')
-state, chain = run_markov_chain_j(M)
+state0, chain0 = run_markov_chain_j(M, True)
+state1, chain1 = run_markov_chain_j(M, False)
 
-assert jnp.allclose(chain[:,0], jnp.arange(1,101))
-assert state.position[0] == 100
-assert state.cumsum[4] == 54500
+assert jnp.allclose(chain0[:,0], jnp.arange(1,101))
+assert state0.position[0] == 100
+assert state0.cumsum[4] == 54500
