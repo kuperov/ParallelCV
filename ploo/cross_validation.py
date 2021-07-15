@@ -10,7 +10,6 @@ from typing import Tuple, Union
 
 import arviz as az
 import chex
-import jax
 import matplotlib.pyplot as plt
 import numpy as np
 from jax import lax
@@ -45,6 +44,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         rng_key: chex.ArrayDevice = None,
         **kwargs,
     ) -> None:
+        rng_key = rng_key or post.rng_key
         self.post = post
         timer = Timer()
         _, example_ll = self.model.log_prior_likelihood(self.model.initial_value())
@@ -73,8 +73,8 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
             log_lik = self.model.log_cond_pred(model_params, coords)  # covariates?
             return jnp.mean(log_lik * mask)
 
-        fold_initial_state = vmap(new_cv_state, (1, None))
-        cv_initial_states = vmap(fold_initial_state, (0, None, 0))(
+        fold_initial_state = vmap(new_cv_state, (0, None, None))  # map over chains
+        cv_initial_states = vmap(fold_initial_state, (None, None, 0))(  # map over folds
             post.warmup_res.starting_values, potential, jnp.arange(scheme.folds)
         )
 
@@ -97,19 +97,19 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
             def one_step(
                 cv_state: CrossValidationState, rng_subkey: chex.ArrayDevice
             ) -> Tuple[CrossValidationState, CVHMCState]:
-                rng_keys = random.split(rng_subkey, (scheme.folds, self.chains))
+                # only need as many random keys as chains; different folds don't
+                # need different random keys
+                rng_keys = random.split(rng_subkey, self.chains)
                 # markov kernel function for a single chain number, across all folds
-                kernel_c = vmap(kernel, in_axes=[0, 0])
+                kernel_c = vmap(kernel, in_axes=[None, 0])
                 # markov kernel function for all chain-folds
-                kernel_cf = vmap(kernel_c, in_axes=[1, 1])
+                kernel_cf = vmap(kernel_c, in_axes=[0, 1])
                 hmc_state, hmc_info = kernel_cf(rng_keys, cv_state.hmc_state)
                 # conditional predictive function for a single chain number, all folds
                 pred_c = vmap(log_cond_pred, in_axes=[0, 0, 0])
                 # conditional predictive for all chain-folds
                 pred_cf = vmap(pred_c, in_axes=(1, None, None))
-                pred = pred_cf(
-                    hmc_state.position, fold_preds.coordinates, fold_preds.length
-                )
+                pred = pred_cf(hmc_state.position, fold_preds.coords, fold_preds.masks)
                 # update online estimators
                 div_count = cv_state.divergence_count + 1.0 * hmc_info.is_divergent
                 accept_count = cv_state.accepted_count + 1.0 * hmc_info.is_accepted
@@ -138,7 +138,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
             )
             return accumulator, positions
 
-        j_do_cv = jax.jit(do_cv)
+        j_do_cv = do_cv  # jax.jit(do_cv)
         accumulator, states = j_do_cv()
 
         accumulator.divergence_count.block_until_ready()  # for accurate iter rate

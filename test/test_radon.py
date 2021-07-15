@@ -34,8 +34,8 @@ class TestRadonModel(TestCase):
         # cross-validate by k-fold
         rng_key = random.PRNGKey(seed=42)
         kfold = KFold(shape=model.log_radon.shape, k=5, rng_key=rng_key)
-        cv = post.cross_validate(scheme=kfold)
-        self.assertIsInstance(cv, CrossValidation)
+        cross_validation = post.cross_validate(scheme=kfold)
+        self.assertIsInstance(cross_validation, CrossValidation)
 
 
 if __name__ == "__main__":

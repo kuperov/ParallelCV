@@ -21,8 +21,8 @@ class PredCoords:
     """Set of (possibly unbalanced) prediction coordinates
 
     This class contains a set of prediction coordinates as a "jagged array" implemented
-    using a jax array and an array of masks to apply to the predictions, with "1" being
-    include and "0" being exclude. We took this approach because Alex couldn't work out
+    using a jax array and an array of masks to apply to the predictions, with 1 meaning
+    include and 0 meaning exclude. We took this approach because Alex couldn't work out
     how to dynamically slice the coordinate array within the inference loop, so we just
     perform a static number of predictions for each group, and filter out the ones that
     aren't needed.
