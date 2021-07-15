@@ -44,7 +44,10 @@ class PredCoords:
 
 
 class CrossValidationScheme(Iterable):
-    """Abstract class representing a structured cross-validation.
+    """Abstract class representing a cross-validation (CV) scheme.
+
+    A CV scheme is a pattern of case deletions and predictive coordinates
+    used to construct an estimate of a model's predictive ability.
 
     Each instance is instantiated with a numpy-style `shape` that
     denotes the dimensions of the likelihood contribution array.

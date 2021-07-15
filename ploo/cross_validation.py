@@ -10,6 +10,7 @@ from typing import Tuple, Union
 
 import arviz as az
 import chex
+import jax
 import matplotlib.pyplot as plt
 import numpy as np
 from jax import lax
@@ -61,7 +62,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
             f"using {cv_chains:,} chains..."
         )
         masks = scheme.mask_array()
-        fold_preds = scheme.pred_indexes()
+        fold_coord = scheme.pred_indexes()
 
         def potential(inf_params: InfParams, cv_fold: int) -> chex.ArrayDevice:
             return self.model.cv_potential(inf_params, masks[cv_fold])
@@ -103,20 +104,26 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
                 # need different random keys
                 rng_keys = random.split(rng_subkey, self.chains)
                 # markov kernel function for a single chain number, across all folds
-                kernel_c = vmap(kernel, in_axes=[None, 0])
+                kernel_c = vmap(kernel, in_axes=[0, 0])
                 # markov kernel function for all chain-folds
-                kernel_cf = vmap(kernel_c, in_axes=[0, 1])
+                kernel_cf = vmap(kernel_c, in_axes=[None, 0])
                 hmc_state, hmc_info = kernel_cf(rng_keys, cv_state.hmc_state)
-                # conditional predictive function for a single chain number, all folds
-                pred_c = vmap(log_cond_pred, in_axes=[0, 0, 0])
+
+                # conditional predictive function
+                # map over chains
+                pred_ch = vmap(log_cond_pred, [0, None, None])
                 # conditional predictive for all chain-folds
-                pred_cf = vmap(pred_c, in_axes=(1, None, None))
-                # FIXME: vectorize over coordinates too
-                pred = pred_cf(hmc_state.position, fold_preds.coords, fold_preds.masks)
-                # update online estimators
+                pred_ch_fo = vmap(pred_ch, [0, 0, 0])
+                # vectorize over coordinates too
+                pred_ch_fo_co = vmap(pred_ch_fo, [None, 1, 1])
+                # evaluate predictive over chain*fold*coordinate
+                log_pred = pred_ch_fo_co(
+                    hmc_state.position, fold_coord.coords, fold_coord.masks
+                ).sum(axis=0)
+                # accumulate online estimates
                 div_count = cv_state.divergence_count + 1.0 * hmc_info.is_divergent
                 accept_count = cv_state.accepted_count + 1.0 * hmc_info.is_accepted
-                log_pred_cumsum = cv_state.sum_log_pred_dens + pred
+                log_pred_cumsum = cv_state.sum_log_pred_dens + log_pred
                 # state to pass to next iteration
                 updated_state = CrossValidationState(
                     divergence_count=div_count,
@@ -141,7 +148,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
             )
             return accumulator, positions
 
-        j_do_cv = do_cv  # jax.jit(do_cv)
+        j_do_cv = jax.jit(do_cv)
         accumulator, states = j_do_cv()
 
         accumulator.divergence_count.block_until_ready()  # for accurate iter rate
@@ -218,11 +225,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         """
         if not self.states:
             raise Exception("States not retained. Cannot construct ArviZ object.")
-        fold_indexes = jnp.arange(self.scheme.folds)
-        chain_folds = jnp.repeat(fold_indexes, self.chains)
-        chain_i = chain_folds == cv_fold
-        if not jnp.sum(chain_i):
-            raise Exception("No chains match CV fold {self.cv_fold}")
+        chain_i = np.arange(self.folds) == cv_fold
         draw_subset = {
             var: np.compress(chain_i, drw, axis=0) for (var, drw) in self.states.items()
         }
