@@ -75,7 +75,10 @@ def run_markov_chain(m, retain_draws):
 
 
 print('starting jit')
-run_markov_chain_j = jax.jit(run_markov_chain, static_argnames=['m', 'retain_draws'])
+run_markov_chain_j = jax.jit(
+    run_markov_chain,
+    static_argnames=['m', 'retain_draws']
+)
 print('done with jit')
 state0, chain0 = run_markov_chain_j(M, True)
 state1, chain1 = run_markov_chain_j(M, False)
