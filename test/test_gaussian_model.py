@@ -17,6 +17,8 @@ from ploo.models import GaussianModel
 
 
 class TestGaussian(unittest.TestCase):
+    """Simple tests on Gaussian model"""
+
     def setUp(self) -> None:
         self.y = jnp.array([1.0, 0, -1.0])
         self.model = GaussianModel(
@@ -24,6 +26,8 @@ class TestGaussian(unittest.TestCase):
         )
 
     def test_log_lik(self):
+        """Does the joint prior & likelihood evaluate correctly"""
+
         y = jnp.array([1.0, 0, -1.0])
 
         # full_data (not a cv fold)
@@ -42,16 +46,23 @@ class TestGaussian(unittest.TestCase):
         )
 
     def test_transforms(self):
-        mp = {"mu": 0.5, "sigma": 2.5}
-        tp = {"mu": 0.5, "sigma": jnp.log(2.5)}
-        transformed, _ = self.model.inverse_transform_log_det(tp)
-        self.assertAlmostEqual(jnp.array(mp["mu"]), transformed["mu"], places=5)
-        self.assertAlmostEqual(jnp.array(mp["sigma"]), transformed["sigma"], places=5)
-        transformed = self.model.forward_transform(mp)
-        self.assertAlmostEqual(jnp.array(tp["mu"]), transformed["mu"], places=5)
-        self.assertAlmostEqual(jnp.array(tp["sigma"]), transformed["sigma"], places=5)
+        """Are transformations applied correctly"""
+        model_p = {"mu": 0.5, "sigma": 2.5}
+        trans_p = {"mu": 0.5, "sigma": jnp.log(2.5)}
+        transformed, _ = self.model.inverse_transform_log_det(trans_p)
+        self.assertAlmostEqual(jnp.array(model_p["mu"]), transformed["mu"], places=5)
+        self.assertAlmostEqual(
+            jnp.array(model_p["sigma"]), transformed["sigma"], places=5
+        )
+        transformed = self.model.forward_transform(model_p)
+        self.assertAlmostEqual(jnp.array(trans_p["mu"]), transformed["mu"], places=5)
+        self.assertAlmostEqual(
+            jnp.array(trans_p["sigma"]), transformed["sigma"], places=5
+        )
 
     def test_hmc(self):
+        """Does inference with HMC behave as expected"""
+
         y = GaussianModel.generate(N=200, mu=0.5, sigma=2.0, seed=42)
         gauss = GaussianModel(y)
         post = gauss.inference(
@@ -62,8 +73,8 @@ class TestGaussian(unittest.TestCase):
         )
         self.assertIsInstance(post, _Posterior)
         self.assertIs(gauss, post.model)
-        p0 = next(iter(gauss.parameters()))
-        self.assertEqual(post.post_draws[p0].shape, (4, 1000))
+        first_par = next(iter(gauss.parameters()))
+        self.assertEqual(post.post_draws[first_par].shape, (4, 1000))
 
         self.assertAlmostEqual(jnp.mean(y), jnp.mean(post.post_draws["mu"]), places=1)
         self.assertAlmostEqual(jnp.std(y), jnp.mean(post.post_draws["sigma"]), places=1)
