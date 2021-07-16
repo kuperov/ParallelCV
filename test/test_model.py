@@ -7,10 +7,10 @@ import unittest
 from types import FunctionType
 from typing import Tuple
 
+import arviz as az
 import chex
 import distrax
 import jax
-from arviz.data.inference_data import InferenceData
 from jax import numpy as jnp
 from jax.scipy import stats as st
 
@@ -181,11 +181,16 @@ class TestComparisons(unittest.TestCase):
         y = _GaussianVarianceModel.generate(N=50, mean=0, sigma_sq=10, rng_key=gen_key)
         model_1 = _GaussianVarianceModel(y, mean=0.0)
         post_1 = model_1.inference(draws=1e3, chains=4)
+        # LOO
         cv_1 = post_1.cross_validate(retain_draws=True)
+        # 50 folds x 4 chains x 1e3/2 = 500 draws per chain
+        self.assertEqual(cv_1.states["sigma_sq"].shape, (50, 4, 500))
         m1_av_f0 = cv_1.arviz(cv_fold=0)
-        self.assertIsInstance(m1_av_f0, InferenceData)
+        summ0 = az.summary(m1_av_f0)
+        self.assertEqual(len(summ0), 1)  # should have 1 variable, sigma_sq
+        self.assertIsInstance(m1_av_f0, az.data.inference_data.InferenceData)
         m1_av_f1 = cv_1.arviz(cv_fold=1)
-        self.assertIsInstance(m1_av_f1, InferenceData)
+        self.assertIsInstance(m1_av_f1, az.data.inference_data.InferenceData)
         cv_repr = repr(cv_1)
         self.assertIsInstance(cv_repr, str)
 

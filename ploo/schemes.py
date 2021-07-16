@@ -63,7 +63,7 @@ class CrossValidationScheme(Iterable):
         evaluating conditional predictives.
     """
 
-    def __init__(self, name: str, num_folds: int) -> None:
+    def __init__(self, name: str, num_folds: int, **_kwargs) -> None:
         self.name = name
         self.num_folds = num_folds
 
@@ -157,7 +157,7 @@ class LOO(CrossValidationScheme):
     Each fold removes just one likelihood contribution.
     """
 
-    def __init__(self, shape: Tuple) -> None:
+    def __init__(self, shape: Tuple, **_kwargs) -> None:
         """Create a new LOO CrossValidation.
 
         :param shape: numpy shape of likelihood contribution array
@@ -197,7 +197,7 @@ class LFO(CrossValidationScheme):
     observations at the start.
     """
 
-    def __init__(self, shape, margin: int) -> None:
+    def __init__(self, shape, margin: int, **_kwargs) -> None:
         """Create a new leave-future-out (LFO) CrossValidation.
 
         This currently only works with one-dimensional dependence structures
@@ -229,7 +229,7 @@ class KFold(CrossValidationScheme):
     Each fold removes N/K likelihood contributions
     """
 
-    def __init__(self, shape, k, rng_key) -> None:
+    def __init__(self, shape, k, rng_key, **_kwargs) -> None:
         """Create new KFold object
 
         :param shape:   numpy shape of likelihood contributions
@@ -272,7 +272,7 @@ class LGO(CrossValidationScheme):
         corresponding to the bottom of the model hierarchy.
     """
 
-    def __init__(self, shape: Tuple, group_ids: Iterable[int]) -> None:
+    def __init__(self, shape: Tuple, group_ids: Iterable[int], **_kwargs) -> None:
         """Create LGO instance
 
         :param shape: shape of (1D) log likelihood contribution array
