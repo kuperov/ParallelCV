@@ -4,6 +4,7 @@ Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
 """
 import time
+from typing import Dict
 
 import chex
 import jax
@@ -34,7 +35,7 @@ def print_devices():
         print("Only CPU is available. Check cuda/cudnn library versions.")
 
 
-def to_posterior_dict(post_draws: chex.ArrayDevice) -> xr.Dataset:
+def to_posterior_dict(post_draws: Dict[str, chex.ArrayDevice]) -> xr.Dataset:
     """Construct xarrays for ArviZ
 
     Converts all objects to in-memory numpy arrays. This involves a lot of copying,

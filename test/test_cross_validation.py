@@ -70,6 +70,9 @@ class TestCrossValidation(unittest.TestCase):
         self.assertIsInstance(m1_av_f0, az.data.inference_data.InferenceData)
         m1_av_f1 = cv_1.arviz(cv_fold=1)
         self.assertIsInstance(m1_av_f1, az.data.inference_data.InferenceData)
+        # check dimensions: 4 chains, 500 draws
+        self.assertEqual(len(m1_av_f1["posterior"]["chain"]), 4)
+        self.assertEqual(len(m1_av_f1["posterior"]["draw"]), 500)
         cv_repr = repr(cv_1)
         self.assertIsInstance(cv_repr, str)
         # K-fold

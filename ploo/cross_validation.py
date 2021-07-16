@@ -217,11 +217,9 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         """
         if not self.states:
             raise Exception("States not retained. Cannot construct ArviZ object.")
-        # arviz wants arrays to have axes (draw, chain, dim0, ...)
-        draw_subset = {
-            var: jnp.swapaxes(drw[cv_fold], axis1=1, axis2=0)
-            for (var, drw) in self.states.items()
-        }
+        # to_posterior_dict wants arrays to have axes (chain, draw, dim0, ...)
+        # so it's enough to just index the right fold for each variable
+        draw_subset = {var: drw[cv_fold] for (var, drw) in self.states.items()}
         return az.InferenceData(posterior=to_posterior_dict(draw_subset))
 
     @property

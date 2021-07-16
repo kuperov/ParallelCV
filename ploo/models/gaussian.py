@@ -95,6 +95,7 @@ class GaussianVarianceModel(Model):
     Because :math:`\sigma^2` has only positive support, we need to transform
     it to cover the real line. One way is with the logarithmic transform.
     """
+    name = "Gaussian variance model"
 
     def __init__(
         self,
