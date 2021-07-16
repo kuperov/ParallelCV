@@ -237,6 +237,7 @@ def new_cv_state(position: PyTree, potential_fn: Callable, cv_fold: int) -> CVHM
     :param position: starting position
     :param potential_fn: model potential
     :param cv_fold: index of cross-validation fold
+    :return: new CVHMCState object
     """
     potential_energy, potential_energy_grad = jax.value_and_grad(potential_fn)(
         position, cv_fold
@@ -310,9 +311,10 @@ def cv_kernel(
     :param step_size: HMC step size
     :param inverse_mass_matrix: HMC inv mass matrix. If diagonal, a 1D array, or a
         square 2D array.
-    :param num_integration_steps: number of steps to run the integrator for each proposal
+    :param num_integration_steps: number of steps to run the integrator for each
+        proposal
     :param divergence_threshold: minimum change in energy to declare a divergence
-    :raises: ValueError: if inverse_mass_matrix is of incorrect shape.
+    :raises ValueError: if inverse_mass_matrix is of incorrect shape.
     :return: Callable: HMC kernel as a function
     """
 
