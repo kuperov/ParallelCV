@@ -182,7 +182,7 @@ class TestComparisons(unittest.TestCase):
         model_1 = _GaussianVarianceModel(y, mean=0.0)
         post_1 = model_1.inference(draws=1e3, chains=4)
         # LOO
-        cv_1 = post_1.cross_validate(retain_draws=True)
+        cv_1 = post_1.cross_validate(thin=2)
         # 50 folds x 4 chains x 1e3/2 = 500 draws per chain
         self.assertEqual(cv_1.states["sigma_sq"].shape, (50, 4, 500))
         m1_av_f0 = cv_1.arviz(cv_fold=0)
@@ -193,6 +193,9 @@ class TestComparisons(unittest.TestCase):
         self.assertIsInstance(m1_av_f1, az.data.inference_data.InferenceData)
         cv_repr = repr(cv_1)
         self.assertIsInstance(cv_repr, str)
+        # K-fold
+        cv_2 = post_1.cross_validate(thin=2, scheme="KFold", k=5)
+        self.assertEqual(cv_2.states["sigma_sq"].shape, (5, 4, 500))
 
 
 if __name__ == "__main__":

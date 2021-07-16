@@ -32,7 +32,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
     :param post: full-data posterior
     :param scheme: cross-validation scheme. Can be either a class name
         or an instance of CrossValidationScheme
-    :param retain_draws: if True, keep full traces for all MCMC draws
+    :param thin: thinning ratio
     :param rng_key: random number generator state
     :param kwargs: arguments to pass to scheme constructor
     """
@@ -41,17 +41,19 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         self,
         post,  # : _Posterior
         scheme: Union[CrossValidationScheme, str],
-        retain_draws: bool,
+        thin: int = 100,
         rng_key: chex.ArrayDevice = None,
         **kwargs,
     ) -> None:
-        rng_key = rng_key or post.rng_key
+        rng_key = rng_key if rng_key is not None else post.rng_key
         self.post = post
         timer = Timer()
         _, example_ll = self.model.log_prior_likelihood(self.model.initial_value())
         cv_shape = example_ll.shape
         if isinstance(scheme, str):
-            scheme = cv_factory(scheme)(shape=cv_shape, **kwargs)
+            # not all schemes need a key, but splits are cheap so everyone gets one
+            rng_key, scheme_key = random.split(rng_key)
+            scheme = cv_factory(scheme)(shape=cv_shape, rng_key=scheme_key, **kwargs)
         self.scheme = scheme
         cv_chains = self.chains * scheme.folds
         title = f"Brute-force {scheme.name}: {self.model.name}"
@@ -73,7 +75,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
             # Log conditional predictive in terms of unconstrained params.
             # Should be applied to ONE coordinate and mask; we vectorize with JAX
             model_params, _ = self.model.inverse_transform_log_det(inf_params)
-            log_lik = self.model.log_cond_pred(model_params, coords)  # covariates?
+            log_lik = self.model.log_cond_pred(model_params, coords)
             return log_lik * mask
 
         fold_initial_state = vmap(new_cv_state, (0, None, None))  # map over chains
@@ -81,7 +83,7 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
             post.warmup_res.starting_values, potential, jnp.arange(scheme.folds)
         )
 
-        cv_initial_accumulator = CrossValidationState(
+        init_accum = CrossValidationState(
             divergence_count=jnp.zeros((scheme.folds, self.chains)),
             accepted_count=jnp.zeros((scheme.folds, self.chains)),
             sum_log_pred_dens=jnp.zeros((scheme.folds, self.chains)),
@@ -131,21 +133,18 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
                     sum_log_pred_dens=log_pred_cumsum,
                     hmc_state=hmc_state,
                 )
-                return updated_state, hmc_state.position
-
-            # this version of one_step used if retain_draws==False
-            def one_step_nodraws(
-                cv_state: CrossValidationState, rng_subkey: chex.ArrayDevice
-            ) -> Tuple[CrossValidationState, CVHMCState]:
-                updated_state, _ = one_step(cv_state=cv_state, rng_subkey=rng_subkey)
                 return updated_state, None
 
-            step_function = one_step if retain_draws else one_step_nodraws
+            # take `thin` steps, retaining only the last draw
+            def thinned_batch(
+                cv_state: CrossValidationState, rng_key: chex.ArrayDevice
+            ) -> Tuple[CrossValidationState, CVHMCState]:
+                draw_subkeys = random.split(rng_key, thin)
+                accumulator, _ = lax.scan(one_step, cv_state, draw_subkeys)
+                return accumulator, accumulator.hmc_state.position
 
-            draw_keys = random.split(rng_key, self.draws)
-            accumulator, positions = lax.scan(
-                step_function, cv_initial_accumulator, draw_keys
-            )
+            batch_keys = random.split(rng_key, self.draws // thin)
+            accumulator, positions = lax.scan(thinned_batch, init_accum, batch_keys)
             return accumulator, positions
 
         j_do_cv = jax.jit(do_cv)
@@ -161,36 +160,29 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         )
 
         def inverse_transform(param):
-            model_param, _ = self.model.inverse_transform_log_det(param)
-            return model_param
+            return self.model.inverse_transform_log_det(param)[0]
 
-        if retain_draws:
-            # map positions back to model coordinates
-            # NB: if we can evaluate objective online, this will not be necessary
-            position_model = vmap(inverse_transform)(states)
-            # want axes to be (chain, draws, ... <variable dims> ...)
-            rearranged_draws = {
-                var: jnp.swapaxes(draws, axis1=0, axis2=2)
-                for (var, draws) in position_model.items()
-            }
-        else:
-            rearranged_draws = None
+        # map positions back to model coordinates
+        position_model = vmap(inverse_transform)(states)
+        # want axes to be (fold, chain, draws, ... <variable dims> ...)
+        rearranged_draws = {
+            var: jnp.swapaxes(jnp.swapaxes(draws, axis1=0, axis2=1), axis1=1, axis2=2)
+            for (var, draws) in position_model.items()
+        }
 
         self.accumulator = accumulator
         self.states = rearranged_draws
-        self.fold_elpds = (
+        self.fold_elpds = (  # lpd has axes (fold, chain)
             np.mean(self.accumulator.sum_log_pred_dens, axis=1) / self.draws
         )
-
-    @property
-    def elpd(self):
-        """Mean elpd across all folds"""
-        return float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
+        self.elpd = float(
+            jnp.sum(self.accumulator.sum_log_pred_dens / self.draws / self.chains)
+        )
 
     @property
     def elpd_se(self):
         """s.e. of elpd estimates - makes flawed assumption of fold independence"""
-        return float(jnp.std(self.fold_elpds) / jnp.sqrt(self.folds))
+        return float(jnp.std(self.fold_elpds) * jnp.sqrt(self.folds))
 
     @property
     def model(self):
@@ -225,9 +217,10 @@ class CrossValidation:  # pylint: disable=too-many-instance-attributes
         """
         if not self.states:
             raise Exception("States not retained. Cannot construct ArviZ object.")
-        chain_i = np.arange(self.folds) == cv_fold
+        # arviz wants arrays to have axes (draw, chain, dim0, ...)
         draw_subset = {
-            var: np.compress(chain_i, drw, axis=0) for (var, drw) in self.states.items()
+            var: jnp.swapaxes(drw[cv_fold], axis1=1, axis2=0)
+            for (var, drw) in self.states.items()
         }
         return az.InferenceData(posterior=to_posterior_dict(draw_subset))
 

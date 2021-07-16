@@ -137,26 +137,25 @@ class _Posterior(az.InferenceData):
     def cross_validate(
         self,
         scheme: Union[str, CrossValidationScheme] = "LOO",
-        retain_draws=False,
+        thin: int = 100,
         rng_key: chex.ArrayDevice = None,
         **kwargs,
     ) -> "CrossValidation":
         """Run cross-validation for this posterior.
 
         Number of chains and draws per chain are the same as the original inference
-        procedure. Only enable the `retain_draws` flag if you are sure you have enough
-        memory on your GPU. Even moderately-sized problems can exhaust a GPU's memory
-        quite quickly.
+        procedure. Only decreate `thin` if you are sure you have enough memory on your
+        GPU. Even moderately-sized problems can exhaust a GPU's memory quite quickly.
 
         :param scheme: name of cross-validation scheme to apply
-        :param retain_draws: if true, keep MCMC draws for each chain (use with care!)
+        :param thin: thin MCMC draws
         :param rng_key: random generator state
         :param kwargs: arguments to pass to cross-validation scheme constructor
 
         :return: CrossValidation object containing all CV posteriors
         """
         return CrossValidation(
-            self, scheme=scheme, retain_draws=retain_draws, rng_key=rng_key, **kwargs
+            self, scheme=scheme, thin=thin, rng_key=rng_key, **kwargs
         )
 
     def __getattribute__(self, name: str) -> Any:
