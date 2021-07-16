@@ -6,6 +6,7 @@ Alex Cooper <alex@acooper.org>
 import os
 import unittest
 
+import chex
 from jax import numpy as jnp
 
 
@@ -22,7 +23,13 @@ class TestCase(unittest.TestCase):
     """TestCase with a few convenience test methods."""
 
     # pylint: disable=invalid-name
-    def assertClose(self, array1, array2, msg=None, **kwargs) -> None:
+    def assertClose(
+        self,
+        array1: chex.ArrayDevice,
+        array2: chex.ArrayDevice,
+        msg: str = None,
+        **kwargs
+    ) -> None:
         """Assert all elements of array1 and array2 are close in value.
 
         :param array1: first array for comparison
