@@ -7,12 +7,13 @@ from typing import Tuple
 
 import chex
 import distrax
+import jax
 import jax.scipy.stats as st
 from jax import numpy as jnp
 from jax import random
 
 import ploo
-from ploo.model import CVFold, InfParams, ModelParams
+from ploo.model import CVFold, InfParams, Model, ModelParams
 
 
 class GaussianModel(ploo.Model):
@@ -84,3 +85,66 @@ class GaussianModel(ploo.Model):
     def generate(cls, N=200, mu=0.5, sigma=2.0, seed=42):
         key = random.PRNGKey(seed=seed)
         return mu + sigma * random.normal(key, shape=(N,))
+
+
+class GaussianVarianceModel(Model):
+    r"""Test model: Gaussian with unknown variance and a single obs
+
+    The prior for :math:`\sigma^2` is Gamma(a, b).
+
+    Because :math:`\sigma^2` has only positive support, we need to transform
+    it to cover the real line. One way is with the logarithmic transform.
+    """
+
+    def __init__(
+        self,
+        y: jnp.DeviceArray,
+        mean: float = 0.0,
+        prior_shape: float = 2.0,
+        prior_rate: float = 2.0,
+    ) -> None:
+        self.y = y
+        self.mean = mean
+        self.prior_shape = prior_shape
+        self.prior_rate = prior_rate
+        self.sigma_sq_t = distrax.Lambda(jnp.log)
+
+    def log_prior_likelihood(self, model_params: ModelParams):
+        sigma = jnp.sqrt(model_params["sigma_sq"])
+        lprior = st.gamma.logpdf(
+            model_params["sigma_sq"], a=self.prior_shape, scale=1.0 / self.prior_rate
+        )
+        llik = st.norm.logpdf(self.y, loc=self.mean, scale=sigma)
+        return lprior, llik
+
+    def initial_value(self) -> ModelParams:
+        return {"sigma_sq": 1.0}
+
+    def log_cond_pred(self, model_params: ModelParams, coords: jnp.DeviceArray):
+        sigma_sq = model_params["sigma_sq"]
+        lpred = st.norm.logpdf(self.y[coords], loc=self.mean, scale=jnp.sqrt(sigma_sq))
+        return jnp.sum(lpred)
+
+    def forward_transform(self, model_params: ModelParams) -> InfParams:
+        return {"sigma_sq": self.sigma_sq_t.forward(model_params["sigma_sq"])}
+
+    def inverse_transform_log_det(
+        self, inf_params: InfParams
+    ) -> Tuple[ModelParams, chex.ArrayDevice]:
+        sst, jac = self.sigma_sq_t.inverse_and_log_det(inf_params["sigma_sq"])
+        constrained = {"sigma_sq": sst}
+        return constrained, jac
+
+    @classmethod
+    def generate(
+        cls, N: int, mean: float, sigma_sq: float, rng_key: jnp.DeviceArray
+    ) -> jnp.DeviceArray:
+        """Simulate the model with the given parameters
+
+        :param N: number of observations
+        :param mean: mean of process
+        :param sigma_sq: true variance of generated observations
+        :param rng_key: random number generator state
+        :return: jax array of observations
+        """
+        return mean + jnp.sqrt(sigma_sq) * jax.random.normal(shape=(N,), key=rng_key)
