@@ -61,7 +61,7 @@ lint:
 	venv/bin/isort --profile black --check-only ploo test
 	# check for obvious bugs or code standard violations
 	venv/bin/flake8 ploo test
-	# venv/bin/pylint ploo test
+	venv/bin/pylint test  # ploo  # main code not ready to lint yet
 
 gpu:
 	# install gpu-enabled version of jax
