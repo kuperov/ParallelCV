@@ -3,10 +3,7 @@
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
 """
-from functools import partial
-
 import jax.scipy.stats as st
-from jax import jit
 from jax import numpy as jnp
 from jax import random
 
@@ -40,7 +37,6 @@ class AR1(ploo.Model):
         log_lik = jnp.sum(lik_contribs[self.folds != cv_fold])
         return log_prior + log_lik
 
-    @partial(jit, static_argnums=(2,))
     def potential(self, param, cv_fold):
         # todo: log transform for sigma, logit for rho
         return -self.log_joint(cv_fold, **param)

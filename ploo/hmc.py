@@ -10,6 +10,7 @@ which defines the CV folds and deletion patterns.
 
 from typing import Callable, Dict, List, NamedTuple, Tuple, Union
 
+import chex
 import jax
 import numpy as np
 from blackjax import nuts, stan_warmup
@@ -20,12 +21,12 @@ from jax import scipy as jscipy
 from jax import vmap
 from jax.flatten_util import ravel_pytree
 
-Array = Union[np.ndarray, jnp.DeviceArray]
+Array = Union[np.ndarray, chex.ArrayDevice]
 PyTree = Union[Dict, List, Tuple]
 
 
 # inference parameter type annotation
-InfParams = Dict[str, jnp.DeviceArray]
+InfParams = Dict[str, chex.ArrayDevice]
 
 
 class IntegratorState(NamedTuple):
@@ -80,13 +81,12 @@ class CrossValidationState(NamedTuple):
 
 
 class WarmupResults(NamedTuple):
-    """Results of the warmup procedure
-
+    """Results of the warmup procedure.
     These parameters are used to configure future HMC runs.
     """
 
     step_size: float
-    mass_matrix: jnp.DeviceArray
+    mass_matrix: chex.ArrayDevice
     starting_values: List[Dict]
     int_steps: int
 
@@ -120,32 +120,28 @@ class WarmupResults(NamedTuple):
 def warmup(
     potential: Callable,
     initial_value: InfParams,
-    warmup_steps,
-    num_start_pos,
-    rng_key,
+    warmup_steps: int,
+    num_start_pos: int,
+    rng_key: chex.ArrayDevice,
 ) -> WarmupResults:
-    """Run Stan warmup
-
+    """Run Stan warmup.
     We sample initial positions from second half of the Stan warmup, running
     NUTS. Yes I know this is awful, awful, awful. Please don't judge, we'll
     replace it with a shiny new warmup scheme that will surely never have any
     problems ever.
 
-    Args:
-        cv_potential:  potential function, takes model parameter and cross-validation
-                       fold
-        initial_value: an initial value, expressed in inference (unconstrained)
-                       parameters
-        warmup_steps:  number of warmup iterations
-        num_start_pos: number of starting positions to extract
-        rng_key:       random generator state
-
-    Returns:
-        WarmupResults object containing step size, mass matrix, initial positions,
+    :param potential: potential function, takes model parameter and cross-validation
+        fold
+    :param initial_value: an initial value, expressed in inference (unconstrained)
+        parameters
+    :param warmup_steps: number of warmup iterations
+    :param num_start_pos: number of starting positions to extract
+    :param rng_key: random generator state
+    :return: WarmupResults object containing step size, mass matrix, initial positions,
         and integration steps.
     """
     # pass cv_fold = -1 even though should not be necessary
-    assert jnp.isfinite(potential(initial_value, -1)), "Invalid initial value"
+    assert jnp.isfinite(potential(initial_value)), "Invalid initial value"
     warmup_key, start_val_key = random.split(rng_key)
 
     def kernel_factory(step_size, inverse_mass_matrix):
@@ -188,111 +184,49 @@ def full_data_inference(
     warmup_res: WarmupResults,
     draws: int,
     chains: int,
-    rng_key: jnp.DeviceArray,
-) -> CVHMCState:
+    rng_key: chex.ArrayDevice,
+) -> Tuple[CrossValidationState, CVHMCState]:
     """Full-data inference on model (i.e. no CV folds dropped)
 
-    Args:
-        model:      model to perform inference on
-        warmup_res: results from warmup procedure
-        draws:      number of posterior draws per chain
-        chains:     number of chains
-        rng_key:    random generator state
+    :param potential: potential function for HMC
+    :param warmup_res: results from warmup procedure
+    :param draws: number of posterior draws per chain
+    :param chains: number of chains
+    :param rng_key: random generator state
+    :return: tuple of CrossValidationState, representing the accumulated state
+        over the entire MCMC chain, and CVHMCState object containing all draws
+        for all MCMC iterations
     """
     # NB: the special CV fold index of -1 indicates full-data inference.
     # Create one initial state per chain.
     initial_states = vmap(new_cv_state, in_axes=(0, None, None))(
         warmup_res.starting_values, potential, -1
     )
+    initial_accumulator = CrossValidationState(
+        divergence_count=jnp.zeros((chains,)),
+        accepted_count=jnp.zeros((chains,)),
+        sum_log_pred_dens=jnp.zeros((chains,)),
+        hmc_state=initial_states,
+    )
     kernel = cv_kernel(
         potential, warmup_res.step_size, warmup_res.mass_matrix, warmup_res.int_steps
     )
 
-    def one_step(states, iter_key):
+    def one_step(state: CrossValidationState, iter_key):
         keys = random.split(iter_key, chains)
-        states, _ = vmap(kernel)(keys, states)
-        return states, states
-
-    draw_keys = random.split(rng_key, draws)
-    _, states = lax.scan(one_step, initial_states, draw_keys)
-
-    return states
-
-
-# pylint: disable=too-many-arguments
-def cross_validate(
-    cv_potential: Callable,
-    cv_cond_pred: Callable,
-    warmup_res: WarmupResults,
-    cv_folds: int,
-    draws: int,
-    chains: int,
-    rng_key: jnp.DeviceArray,
-) -> CVHMCState:
-    """Cross validation step.
-
-    Runs inference acros all CV folds, using cross-validated version of model potential.
-
-    For now, we will collect all the MCMC samples. In the future we'll replace
-    the inference loop with something that calculates the objective functions
-    (and diagnostics) we want using online estimators.
-
-    Args:
-        cv_potential: cross-validation model potential, function of
-                      (inference parameters, cv_fold)
-        cv_cond_pred: cross-validation conditional predictive density, function of
-                      (inference_parameters, cv_fold)
-        warmup_res:   results from warmup procedure
-        cv_folds:     number of cross-validation folds
-        draws:        number of draws per chain
-        chains:       number of chains per fold
-        key:          random generator state
-
-    Returns:
-        CVHMCState object containing conditional predictive
-    """
-    # assuming 4 chains and a 1-dimensional cross-validation structure,
-    # chain_indexes = [0, 1, 2, 3, 0, 1, 2, 3, 0, ...]
-    chain_indexes = jnp.resize(jnp.arange(chains), chains * cv_folds)
-    # fold_indexes  = [0, 0, 0, 0, 1, 1, 1, 1, 2, ...]
-    fold_indexes = jnp.repeat(jnp.arange(cv_folds), chains)
-    assert chain_indexes.shape == fold_indexes.shape
-    chain_starting_values = {
-        k: sv[chain_indexes] for (k, sv) in warmup_res.starting_values.items()
-    }
-    cv_initial_states = vmap(new_cv_state, (0, None, 0))(
-        chain_starting_values, cv_potential, fold_indexes
-    )
-    cv_initial_accumulator = CrossValidationState(
-        divergence_count=jnp.zeros(fold_indexes.shape),
-        accepted_count=jnp.zeros(fold_indexes.shape),
-        sum_log_pred_dens=jnp.zeros(fold_indexes.shape),
-        hmc_state=cv_initial_states,
-    )
-    kernel = cv_kernel(
-        cv_potential, warmup_res.step_size, warmup_res.mass_matrix, warmup_res.int_steps
-    )
-
-    # each step operates vector of states (representing a cross-section across chains)
-    # and vector of rng keys, one per draw
-    def one_step(
-        cv_state: CrossValidationState, rng_subkey: jnp.DeviceArray
-    ) -> Tuple[CrossValidationState, CVHMCState]:
-        keys = random.split(rng_subkey, chains * cv_folds)
-        hmc_state, hmc_info = vmap(kernel)(keys, cv_state.hmc_state)
-        cond_pred = vmap(cv_cond_pred)(hmc_state.position, hmc_state.cv_fold)
+        hmc_state, hmc_info = vmap(kernel)(keys, state.hmc_state)
+        divs = state.divergence_count + jnp.where(hmc_info.is_divergent, 1, 0)
+        accepted = state.accepted_count + jnp.where(hmc_info.is_accepted, 1, 0)
         updated_state = CrossValidationState(
-            divergence_count=cv_state.divergence_count
-            + jnp.where(hmc_info.is_divergent, 1, 0),
-            accepted_count=cv_state.accepted_count
-            + jnp.where(hmc_info.is_accepted, 1, 0),
-            sum_log_pred_dens=cv_state.sum_log_pred_dens + cond_pred,
+            divergence_count=divs,
+            accepted_count=accepted,
+            sum_log_pred_dens=state.sum_log_pred_dens,
             hmc_state=hmc_state,
         )
-        return updated_state, hmc_state  # (accumulated state, iteration state)
+        return updated_state, hmc_state
 
     draw_keys = random.split(rng_key, draws)
-    accumulator, states = lax.scan(one_step, cv_initial_accumulator, draw_keys)
+    accumulator, states = lax.scan(one_step, initial_accumulator, draw_keys)
 
     return accumulator, states
 
@@ -300,9 +234,10 @@ def cross_validate(
 def new_cv_state(position: PyTree, potential_fn: Callable, cv_fold: int) -> CVHMCState:
     """Initial cross-validation state
 
-    Keyword arguments
-        position:     starting position
-        potential_fn: model potential
+    :param position: starting position
+    :param potential_fn: model potential
+    :param cv_fold: index of cross-validation fold
+    :return: new CVHMCState object
     """
     potential_energy, potential_energy_grad = jax.value_and_grad(potential_fn)(
         position, cv_fold
@@ -371,20 +306,16 @@ def cv_kernel(
     The CV HMC kernel takes one MCMC step (comprising a fixed number of integrator
     steps), advancing from one CVHMC state to another.
 
-    Args:
-        potential_fn:          potential function for model, takes a parameter as a
-                               dict and cross-validation fold number
-        step_size:             HMC step size
-        inverse_mass_matrix:   HMC inv mass matrix. If diagonal, a 1D array, or a
-                               square 2D array.
-        num_integration_steps: number of steps to run the integrator for each proposal
-        divergence_threshold:  minimum change in energy to declare a divergence
-
-    Returns:
-        Callable: HMC kernel as a function
-
-    Raises:
-        ValueError: if inverse_mass_matrix is of incorrect shape.
+    :param potential_fn: potential function for model, takes a parameter as a
+        dict and cross-validation fold number
+    :param step_size: HMC step size
+    :param inverse_mass_matrix: HMC inv mass matrix. If diagonal, a 1D array, or a
+        square 2D array.
+    :param num_integration_steps: number of steps to run the integrator for each
+        proposal
+    :param divergence_threshold: minimum change in energy to declare a divergence
+    :raises ValueError: if inverse_mass_matrix is of incorrect shape.
+    :return: Callable: HMC kernel as a function
     """
 
     ndim = jnp.ndim(inverse_mass_matrix)
@@ -432,6 +363,8 @@ def cv_kernel(
         divergence_threshold,
     )
 
+    # @jax.jit
+    # @chex.assert_max_traces(n=1)
     def kernel(
         rng_key: jnp.ndarray, state: CVHMCState
     ) -> Tuple[CVHMCState, NamedTuple]:
@@ -464,22 +397,15 @@ def cv_hmc_proposal(
 ) -> Callable:
     """Vanilla HMC algorithm.
 
-    Parameters
-    ----------
-    integrator
-        Symplectic integrator used to build the trajectory step by step.
-    kinetic_energy
-        Function that computes the kinetic energy.
-    step_size
-        Size of the integration step.
-    num_integration_steps
-        Number of times we run the symplectic integrator to build the trajectory
-    divergence_threshold
-        Threshold above which we say that there is a divergence.
-
-    Returns
-    -------
-        A kernel that generates a new chain state and information about the transition.
+    :param integrator: symplectic integrator used to build the trajectory step by step.
+    :param kinetic_energy: Function that computes the kinetic energy.
+    :param step_size: Size of the integration step.
+    :param num_integration_steps: Number of times we run the symplectic integrator to
+        build the trajectory
+    :param divergence_threshold: Threshold above which we say that there is a
+        divergent transition.
+    :return: A kernel that generates a new chain state and information about the
+        transition.
     """
 
     def build_trajectory(

@@ -9,7 +9,13 @@ from jax import numpy as jnp
 from jax import random
 from jax.interpreters.xla import DeviceArray
 
-from ploo.hmc import WarmupResults, cross_validate, full_data_inference, warmup
+from ploo.hmc import (
+    CrossValidationState,
+    CVHMCState,
+    WarmupResults,
+    full_data_inference,
+    warmup,
+)
 from ploo.models import GaussianModel
 
 
@@ -33,8 +39,12 @@ class TestInference(unittest.TestCase):
 
     def test_warmup(self):
         """Test warmup. See also test_model.py"""
-        initial = self.gauss.to_inference_params(self.gauss.initial_value())
-        warmup_res = warmup(self.gauss.potential, initial, 600, 8, self.rng_key)
+
+        def potential(params):
+            return self.gauss.cv_potential(params, 1.0)
+
+        initial = self.gauss.forward_transform(self.gauss.initial_value())
+        warmup_res = warmup(potential, initial, 600, 8, self.rng_key)
         self.assertIsInstance(warmup_res, WarmupResults)
         self.assertEqual(warmup_res.int_steps, 3)
         self.assertIsInstance(warmup_res.starting_values, dict)
@@ -46,7 +56,7 @@ class TestInference(unittest.TestCase):
 
     def test_full_data_inference(self):
         """Smoke test full-data inference. Better tests in test_model.py"""
-        states = full_data_inference(
+        accum, states = full_data_inference(
             self.gauss.cv_potential,
             self.warmup,
             draws=1000,
@@ -54,19 +64,8 @@ class TestInference(unittest.TestCase):
             rng_key=self.rng_key,
         )
         self.assertEqual(states.position["mu"].shape, (1000, 4))
-
-    def test_cross_validation(self):
-        """Smoke test cross-validation. Better tests in test_model.py"""
-        accumulator, states = cross_validate(
-            cv_potential=self.gauss.cv_potential,
-            cv_cond_pred=self.gauss.log_cond_pred,
-            warmup_res=self.warmup,
-            cv_folds=self.gauss.cv_folds(),
-            draws=1e3,
-            chains=2,
-            rng_key=self.rng_key,
-        )
-        self.assertIsNotNone(states)
+        self.assertIsInstance(accum, CrossValidationState)
+        self.assertIsInstance(states, CVHMCState)
 
 
 if __name__ == "__main__":

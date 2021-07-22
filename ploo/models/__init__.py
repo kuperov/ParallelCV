@@ -6,4 +6,5 @@ Alex Cooper <alex@acooper.org>
 # flake8: noqa
 
 from .ar_model import AR1
-from .gaussian_model import GaussianModel
+from .gaussian import GaussianModel, GaussianVarianceModel
+from .radon import RadonCountyIntercept

@@ -1,18 +1,24 @@
 # ploo package 
 
+PYTHON=venv/bin/python3
+JUPYTER=venv/bin/jupyter-lab
+
 define HELP
 ploo package Makefile
 
 The following targets are available:
 
-  help   display this message
-  nb     start a jupyter notebook
-  test   run unit tests
-  venv   create the virtual environment in venv/
-  pretty format code
-  lint   run code linters
-  config first-time environment setup
-  clean  remove generated files
+  help     display this message
+  nb       start a jupyter notebook
+  test     run unit tests
+  gpu      install version of jax for GPUs (CUDA 11x)
+  cpu      install version of jax for CPUs
+  venv     create the virtual environment in venv/
+  pretty   format code
+  lint     run code linters
+  fixtures generate testing model fixtures
+  config   first-time environment setup
+  clean    remove generated files
 
 You can invoke any of the above with:
 
@@ -33,17 +39,17 @@ nb: venv
 .PHONY: test
 test: venv
 	# run unit tests
-	venv/bin/python -m unittest discover test
+	$(PYTHON) -m unittest discover --buffer test
 
 venv:
 	# create python virtual environment and install deps
 	# you'll need virtualenv and pip installed, obvs
 	rm -rf venv
 	python3 -m virtualenv --python=python3 venv
-	venv/bin/pip3 install --upgrade pip
-	venv/bin/pip3 install -r requirements/requirements.txt
-	venv/bin/pip3 install -r requirements/requirements-dev.txt
-	venv/bin/python3 setup.py develop
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install -r requirements/requirements.txt
+	$(PYTHON) -m pip install -r requirements/requirements-dev.txt
+	$(PYTHON) setup.py develop
 
 pretty:
 	venv/bin/isort --profile black ploo test
@@ -55,7 +61,19 @@ lint:
 	venv/bin/isort --profile black --check-only ploo test
 	# check for obvious bugs or code standard violations
 	venv/bin/flake8 ploo test
-	# venv/bin/pylint ploo test
+	venv/bin/pylint test  # ploo  # main code not ready to lint yet
+
+gpu:
+	# install gpu-enabled version of jax
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip uninstall -y jax jaxlib
+	$(PYTHON) -m pip install --upgrade "jax[cuda111]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
+
+cpu:
+	# install cpu-only version of jax
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip uninstall -y jax jaxlib
+	$(PYTHON) -m pip install --upgrade "jax[cpu]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
 .PHONY: fixtures
 fixtures:

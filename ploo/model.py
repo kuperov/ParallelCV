@@ -6,31 +6,28 @@ Alex Cooper <alex@acooper.org>
 This module defines a model class that users can extend to implement
 arbitrary likelihood models.
 """
-from typing import Any, Callable, Dict, Iterable, Tuple, Union
+from typing import Any, Dict, Iterable, Tuple, Union
 
 import arviz as az
-import matplotlib.pyplot as plt
-import numpy as np
-import xarray as xr
+import chex
 from jax import numpy as jnp
 from jax import random, vmap
-from scipy import stats as sst
 from tabulate import tabulate
 
-from .cv import CrossValidationScheme, cv_factory
+from .cross_validation import CrossValidation
 from .hmc import (
     CrossValidationState,
     InfParams,
     WarmupResults,
-    cross_validate,
     full_data_inference,
     warmup,
 )
+from .schemes import CrossValidationScheme
 from .statistics import ess, split_rhat
-from .util import Progress, Timer
+from .util import Timer, print_devices, to_posterior_dict
 
 # model parameters are in a constrained coordinate space
-ModelParams = Dict[str, jnp.DeviceArray]
+ModelParams = Dict[str, chex.ArrayDevice]
 
 # CV fold is either 1D or 2D integer index
 CVFold = Union[int, Tuple[int, int]]
@@ -47,46 +44,54 @@ class _Posterior(az.InferenceData):
     range of ArviZ posterior exploration features directly on this object.
 
     Members:
-        model:      Model instance this was created from
-        post_draws: map of posterior draw arrays, keyed by variable, with axes
-                    (chain, draw, variable_axis0, ...)
-        cv_draws:   cross-validation draws
-        seed:       seed used when invoking inference
-        chains:     number of chains per CV posterior
-        warmup_res: results from warmup
-        rng_key:    random number generator state
-        write:      function for writing output to the console
+        model:       Model instance this was created from
+        post_draws:  map of posterior draw arrays, keyed by variable, with axes
+                     (chain, draw, variable_axis0, ...)
+        warmup_res:  results from warmup
+        accumulator: accumulator state object from inference routine
+        rng_key:     random number generator state
     """
 
     def __init__(
         self,
         model: "Model",
-        post_draws: Dict[str, jnp.DeviceArray],
-        seed: int,
-        chains: int,
-        draws: int,
+        post_draws: Dict[str, chex.ArrayDevice],
         warmup_res: WarmupResults,
-        rng_key: jnp.DeviceArray,
-        write: Callable,
+        accumulator: CrossValidationState,
+        rng_key: chex.ArrayDevice,
     ) -> None:
         self.model = model
         self.post_draws = post_draws
-        self.seed = seed
-        self.chains = chains
-        self.draws = draws
+        first_param = next(iter(post_draws))
+        self.chains = post_draws[first_param].shape[0]
+        self.draws = post_draws[first_param].shape[1]
         self.warmup_res = warmup_res
         self.rng_key = rng_key
-        self.write = write
-        # construct xarrays for ArviZ
-        # FIXME: this incorrectly assumes univariate parameters
-        posterior = xr.Dataset(
-            {var: (["chain", "draw"], drws) for var, drws in self.post_draws.items()},
-            coords={
-                "chain": (["chain"], jnp.arange(self.chains)),
-                "draw": (["draw"], jnp.arange(self.draws)),
-            },
-        )
+        self.accumulator = accumulator
+        posterior = to_posterior_dict(self.post_draws)
         super().__init__(posterior=posterior)
+
+    @property
+    def chain_divergences(self) -> int:
+        """Divergence count by chain"""
+        return self.accumulator.divergence_count
+
+    @property
+    def total_divergences(self) -> int:
+        """Total number of divergences, summed across chains"""
+        return jnp.sum(self.accumulator.divergence_count)
+
+    @property
+    def avg_acceptance_rate(self) -> float:
+        """Average acceptance rate across all chains, as proportion in [0,1]"""
+        return float(
+            jnp.sum(self.accumulator.accepted_count) / self.chains / self.draws
+        )
+
+    @property
+    def acceptance_rates(self) -> float:
+        """Acceptance rate by chains, as proportion in [0,1]"""
+        return self.accumulator.accepted_count / self.draws
 
     def __str__(self) -> str:
         title = f"{self.model.name} inference summary"
@@ -96,9 +101,9 @@ class _Posterior(az.InferenceData):
             title,
             "=" * len(title),
             "",
-            f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} "
-            f"chains with seed {self.seed}",
-            "",
+            f"{iters*chains:,} draws from {iters:,} iterations on {chains:,} chains",
+            f"{self.total_divergences} divergences, "
+            f"{self.avg_acceptance_rate*100}% acceptance rate",
         ] + [self._post_table()]
         return "\n".join(desc_rows)
 
@@ -115,8 +120,6 @@ class _Posterior(az.InferenceData):
             "75%",
             "95%",
             "99%",
-            "R̂ᵇᵘˡᵏ",
-            "Sᵉᶠᶠ",
         ]
         table_quantiles = jnp.array([0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
 
@@ -133,67 +136,27 @@ class _Posterior(az.InferenceData):
 
     def cross_validate(
         self,
-        cv_type: Union[str, CrossValidationScheme] = "LOO",
-        rng_key: jnp.DeviceArray = None,
+        scheme: Union[str, CrossValidationScheme] = "LOO",
+        thin: int = 100,
+        rng_key: chex.ArrayDevice = None,
         **kwargs,
     ) -> "CrossValidation":
         """Run cross-validation for this posterior.
 
         Number of chains and draws per chain are the same as the original inference
-        procedure.
+        procedure. Only decreate `thin` if you are sure you have enough memory on your
+        GPU. Even moderately-sized problems can exhaust a GPU's memory quite quickly.
 
-        Args:
-            cv_scheme: name of cross-validation scheme to apply
-            rng_key:   random generator state
-            kwargs:    arguments to pass to cross-validation scheme constructor
+        :param scheme: name of cross-validation scheme to apply
+        :param thin: thin MCMC draws
+        :param rng_key: random generator state
+        :param kwargs: arguments to pass to cross-validation scheme constructor
 
-        Returns:
-            CrossValidation object containing all CV posteriors
+        :return: CrossValidation object containing all CV posteriors
         """
-        rng_key = rng_key or self.rng_key
-        timer = Timer()
-        # shape from a likelihood evaluation: wasteful but prevents mistakes
-        cv_shape = self.model.log_likelihood(self.model.initial_value()).shape
-        cv_scheme = cv_factory(cv_type)(shape=cv_shape, **kwargs)
-        cv_chains = self.chains * cv_scheme.cv_folds()
-        self.write(
-            f"Cross-validation with {cv_scheme.cv_folds():,} folds "
-            f"using {cv_chains:,} chains..."
+        return CrossValidation(
+            self, scheme=scheme, thin=thin, rng_key=rng_key, **kwargs
         )
-        masks = cv_scheme.mask_array()
-        pred_indexes = cv_scheme.pred_index_array()
-
-        def potential(inf_params: InfParams, cv_fold: int) -> jnp.DeviceArray:
-            return self.model.cv_potential(inf_params, masks[cv_fold])
-
-        def log_cond_pred(inf_params: InfParams, cv_fold: int) -> jnp.DeviceArray:
-            model_params = self.model.to_model_params(inf_params)
-            return self.model.log_cond_pred(model_params, pred_indexes[cv_fold])
-
-        accumulator, states = cross_validate(
-            potential,
-            log_cond_pred,
-            self.warmup_res,
-            cv_scheme.cv_folds(),
-            self.draws,
-            self.chains,
-            rng_key,
-        )
-        self.write(
-            f"      {cv_chains*self.draws:,} HMC draws took {timer}"
-            f" ({cv_chains*self.draws/timer.sec:,.0f} iter/sec)."
-        )
-
-        # map positions back to model coordinates
-        # NB: if we can evaluate objective online, this will not be necessary
-        position_model = vmap(self.model.to_model_params)(states.position)
-        # want axes to be (chain, draws, ... <variable dims> ...)
-        rearranged_draws = {
-            var: jnp.swapaxes(draws, axis1=0, axis2=1)
-            for (var, draws) in position_model.items()
-        }
-
-        return CrossValidation(self, accumulator, rearranged_draws, scheme=cv_scheme)
 
     def __getattribute__(self, name: str) -> Any:
         """If the user invokes a plot_* function, delegate to ArviZ."""
@@ -221,144 +184,6 @@ class _Posterior(az.InferenceData):
         return parent_dir + _ARVIZ_METHODS
 
 
-class CrossValidation:  # pylint: disable=too-many-instance-attributes
-    """Model cross-validated
-
-    This class contains draws for all the CV posteriors.
-    """
-
-    def __init__(
-        self,
-        post: _Posterior,
-        accumulator: CrossValidationState,
-        states: Dict[str, jnp.DeviceArray],
-        scheme: CrossValidationScheme,
-    ) -> None:
-        """Create a new CrossValidation instance
-
-        Args:
-            post:         full-data posterior
-            accumulator:  state accumulator used during inference step
-            states:       MCMC states, as dict keyed by parameter
-            folds:        number of cross-validation folds
-            fold_indexes: indexes of cross-validation folds
-        """
-        self.post = post
-        self.accumulator = accumulator
-        self.states = states
-        self.scheme = scheme
-        self.elpd = float(jnp.mean(self.accumulator.sum_log_pred_dens / self.draws))
-        self.elpd_se = float(
-            jnp.std(self.accumulator.sum_log_pred_dens / self.draws)
-            / jnp.sqrt(self.draws)
-        )
-
-    @property
-    def model(self) -> "Model":
-        """Model being cross-validated"""
-        return self.post.model
-
-    @property
-    def draws(self) -> int:
-        return self.post.draws
-
-    @property
-    def chains(self) -> int:
-        return self.post.chains
-
-    def __lt__(self, cv):
-        return self.elpd.__gt__(cv.elpd)  # note change of sign, want largest first
-
-    def arviz(self, cv_fold):
-        """Retrieves ArviZ :class:`az.InferenceData` object for a CV fold
-
-        Keyword arguments
-            cv_fold: index of CV fold corresponding to desired posterior
-        """
-        fold_indexes = jnp.arange(self.scheme.cv_folds())
-        chain_folds = jnp.repeat(fold_indexes, self.chains)
-        chain_i = chain_folds == cv_fold
-        if not jnp.sum(chain_i):
-            raise Exception("No chains match CV fold {self.cv_fold}")
-        posterior = xr.Dataset(
-            {
-                var: (["chain", "draw"], jnp.compress(chain_i, drws, axis=0))
-                for var, drws in self.states.items()
-            },
-            coords={
-                "chain": (["chain"], jnp.arange(self.chains)),
-                "draw": (["draw"], jnp.arange(self.draws)),
-            },
-        )
-        return az.InferenceData(posterior=posterior)
-
-    @property
-    def divergences(self):
-        """Divergence count for each chain"""
-        return self.accumulator.divergence_count
-
-    @property
-    def num_divergent_chains(self):
-        """Total number of chains with nonzero divergences"""
-        return int(jnp.sum(self.accumulator.divergence_count > 0))
-
-    @property
-    def acceptance_rates(self):
-        """Acceptance rate for all chains, as fraction of 1"""
-        return self.accumulator.accepted_count / self.draws
-
-    def __repr__(self) -> str:
-        avg_accept = float(jnp.mean(self.acceptance_rates))
-        min_accept = float(jnp.min(self.acceptance_rates))
-        max_accept = float(jnp.max(self.acceptance_rates))
-        return "\n".join(
-            [
-                "Cross-validation summary",
-                "========================",
-                "",
-                f"    elpd = {self.elpd:.4f} (se {self.elpd_se:.4f})",
-                "",
-                f"Calculated from {self.folds:,} folds "
-                f"({self.chains:,} chains per fold, "
-                f"{self.chains*self.folds:,} total)",
-                "",
-                f"Average acceptance rate {avg_accept*100:.1f}% "
-                f"(min {min_accept*100:.1f}%, max {max_accept*100:.1f}%)",
-                "",
-                f"Divergent chain count: {self.num_divergent_chains:,}",
-            ]
-        )
-
-    def block_until_ready(self) -> None:
-        """Block the thread until results are back from the GPU."""
-        self.accumulator.divergence_count.block_until_ready()
-
-    def densities(self, par, combine=False, ncols=4, figsize=(40, 80)):
-        """Small-multiple kernel densities for cross-validation posteriors."""
-        rows = int(jnp.ceil(self.model.cv_folds() / ncols))
-        _, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
-        for fold, axis in zip(range(self.model.cv_folds()), axes.ravel()):
-            chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
-            all_draws = self.states[par][chain_indexes, :]
-            if combine:
-                all_draws = jnp.expand_dims(jnp.reshape(all_draws, (-1,)), axis=1)
-            x_coords = jnp.linspace(jnp.min(all_draws), jnp.max(all_draws), 1_000)
-            for i in range(self.chains):
-                draws = all_draws[i, :]
-                try:
-                    axis.plot(x_coords, sst.gaussian_kde(draws)(x_coords))
-                except np.linalg.LinAlgError:
-                    print(f"Error evaluating kde for fold {fold}, chain {i}")
-
-    def trace_plots(self, par, ncols=4, figsize=(40, 80)) -> None:
-        """Plot trace plots for every single cross validation fold."""
-        rows = int(jnp.ceil(self.model.cv_folds() / ncols))
-        _, axes = plt.subplots(nrows=rows, ncols=ncols, figsize=figsize)
-        for fold, axis in zip(range(self.model.cv_folds()), axes.ravel()):
-            chain_indexes = jnp.arange(fold * self.chains, (fold + 1) * self.chains)
-            axis.plot(self.states[par][chain_indexes, :].T)
-
-
 class Model:
     """A Bayesian model. Encapsulates both data and specification.
 
@@ -378,51 +203,31 @@ class Model:
 
     name = "Unnamed model"
 
-    def log_likelihood(self, model_params: ModelParams) -> jnp.DeviceArray:
-        """Log likelihood
+    def log_prior_likelihood(
+        self, model_params: ModelParams
+    ) -> Tuple[chex.ArrayDevice, chex.ArrayDevice]:
+        """Log likelihood log p(y|θ) and prior log p(θ)
 
-        JAX needs to be able to trace this function.
+        .. note::
+            JAX needs to be able to trace this function. See JAX docs for what that
+            means.
 
-        Note: future versions of this function won't take cv_fold as a
-        parameter. But we haven't yet built the CV abstraction. Future
-        version will return log likelihood contributions contributions
-        { log p(yᵢ|θ): i=1,2,⋯,n }, as a 1- or 2-dimensional array.
-        The shape of the array corresponds to the shape of the model's
-        dependence structure, or a 1-dimensional array if data are iid.
-
-        Args:
-            params:  dict of model parameters, in constrained (model)
-                     parameter space
-
-        Returns:
-            log likelihood at the given parameters for the given CV fold
-        """
-        raise NotImplementedError()
-
-    def log_prior(self, model_params: ModelParams) -> jnp.DeviceArray:
-        """Compute log prior log p(θ)
-
-        JAX needs to be able to trace this function.
-
-        Args:
-            params: dict of model parameters in constrained (model)
-                    parameter space
+        :param model_params: dict of model parameters, in constrained (model)
+                             parameter space
+        :return: log likelihood at the given parameters
         """
         raise NotImplementedError()
 
     def log_cond_pred(
-        self, model_params: ModelParams, coords: jnp.DeviceArray
-    ) -> jnp.DeviceArray:
-        """Computes log conditional predictive ordinate, log p(ỹ|θˢ).
+        self, model_params: ModelParams, coords: chex.ArrayDevice
+    ) -> chex.ArrayDevice:
+        """Computes log conditional predictive ordinate, log p(yᵢ|θˢ).
 
-        FIXME: needs some kind of index to identify the conditioning values
-
-        Args:
-            params:  a dict of parameters (constrained (model) parameter
-                     space) that potentially contains vectors
-            coords:  points at which to evaluate predictive density, expressed
-                     as coordinates that correspond to the shape of the log
-                     likelihood contributions
+        :param model_params: a dict of parameters (constrained (model) parameter
+            space) that potentially contains vectors
+        :param coords: points at which to evaluate predictive density, expressed
+            as coordinates that correspond to the shape of the log likelihood
+            contributions array
         """
         raise NotImplementedError()
 
@@ -430,100 +235,62 @@ class Model:
         """A deterministic starting value in model parameter space."""
         raise NotImplementedError()
 
-    def initial_value_unconstrained(self) -> InfParams:
+    def initial_value_transformed(self) -> InfParams:
         """Deterministic starting value, transformed to unconstrained inference space"""
-        return self.to_inference_params(self.initial_value())
+        inf_params = self.forward_transform(self.initial_value())
+        return inf_params
 
     def cv_potential(
-        self, inf_params: InfParams, likelihood_mask: jnp.DeviceArray
-    ) -> jnp.DeviceArray:
+        self, inf_params: InfParams, likelihood_mask: chex.ArrayDevice
+    ) -> chex.ArrayDevice:
         """Potential for a CV fold.
 
-        Args:
-            inf_params: model parameters in inference (unconstrained) space
-            lhood_mask: mask to apply to likelihood contributions by elementwise
-                        multiplication
-
-        Returns
-            joint potential of model, adjusted for CV fold
+        :param inf_params: model parameters in inference (unconstrained) space
+        :param likelihood_mask: mask to apply to likelihood contributions by
+            elementwise multiplication
+        :return: potential of model, adjusted for CV fold
         """
-        model_params = self.to_model_params(inf_params)
-        llik = self.log_likelihood(model_params=model_params) * likelihood_mask
-        lprior = self.log_prior(model_params=model_params)
-        ldet = self.log_det(model_params=model_params)
-        return -jnp.sum(llik) - lprior - ldet
-
-    def potential(self, inf_params: InfParams, cv_fold: int = -1) -> jnp.DeviceArray:
-        """Potential for a CV fold.
-
-        Args:
-            inf_params: model parameters in inference (unconstrained) space
-            cv_fold:    NOT USED - dummy parameter so we can reuse HMC routines
-
-        Returns
-            joint potential of model, adjusted for CV fold
-        """
-        model_params = self.to_model_params(inf_params)
-        llik = self.log_likelihood(model_params=model_params)
-        lprior = self.log_prior(model_params=model_params)
-        ldet = self.log_det(model_params=model_params)
-        return -jnp.sum(llik) - lprior - ldet
+        model_params, ldet = self.inverse_transform_log_det(inf_params)
+        lprior, llik = self.log_prior_likelihood(model_params=model_params)
+        llik_subset = jnp.sum(llik * likelihood_mask)
+        return -(llik_subset + lprior + ldet)
 
     def parameters(self):
         """Names of parameters"""
         return list(self.initial_value().keys())
 
-    @classmethod
-    def generate(
-        cls, random_key: jnp.DeviceArray, model_params: ModelParams
-    ) -> jnp.DeviceArray:
-        """Generate a dataset corresponding to the specified random key."""
-        raise NotImplementedError()
-
     # pylint: disable=no-self-use
-    def to_inference_params(self, model_params: ModelParams) -> InfParams:
+    def forward_transform(self, model_params: ModelParams) -> InfParams:
         """Convert constrained (model) params to unconstrained (sampler) space
 
         The argument model_params is expressed in constrained (model) coordinate
         space.
 
-        Args:
-            model_params: dictionary of parameters in constrained (model)
-                          parameter space, keyed by name
-
-        Returns:
-            dictionary of parameters with same structure as params, but
-            in unconstrained (sampler) parameter space.
+        :param model_params: dictionary of parameters in constrained (model)
+            parameter space, keyed by name
+        :return: dictionary of parameters with same structure as params, but in
+            unconstrained (sampler) parameter space.
         """
+        # by default just do identity transform
         return model_params
 
-    def to_model_params(self, inf_params: InfParams) -> ModelParams:
-        """Convert unconstrained to constrained parameters space
+    def inverse_transform_log_det(
+        self, inf_params: InfParams
+    ) -> Tuple[ModelParams, chex.ArrayDevice]:
+        """Map unconstrained to constrained parameters, with log determinant
 
         Maps unconstrained (inference) params in `inf_params` to corresponding
-        parameters in constrained (model) parameter space.
+        parameters in constrained (model) parameter space. We do both at once so it's
+        harder to forget to implement the log determinant.
 
-        Args:
-            inf_params: dictionary of parameters in unconstrained (sampler) parameter
-                        space, keyed by name
-
-        Returns:
-            dictionary of parameters with same structure as inf_params, but
-            in constrained (model) parameter space.
+        :param inf_params: dictionary of parameters in unconstrained (sampler)
+            parameter space, keyed by name
+        :return: Tuple of model parameter dict and log determinant. The parameter dict
+            has the same structure as inf_params, but in constrained (model) parameter
+            space.
         """
-        return inf_params
-
-    # pylint: disable=unused-argument
-    def log_det(self, model_params: ModelParams) -> jnp.DeviceArray:
-        """Return total log determinant of transformation to constrained parameters
-
-        Args:
-            model_params: dic of parameters in constrained (model) parameter space
-
-        Returns:
-            dictionary of parameters with same structure as model_params
-        """
-        return 0.0
+        # by default just do identity transform
+        return inf_params, jnp.array(0.0)
 
     def inference(
         self,
@@ -531,68 +298,87 @@ class Model:
         warmup_steps: int = 500,
         chains: int = 8,
         seed: int = 42,
-        out: Progress = None,
-        warmup_results=None,
+        warmup_results: WarmupResults = None,
     ) -> _Posterior:
         """Run HMC with full dataset, tuned by Stan+NUTS warmup
 
-        Args:
-            draws:          number of draws per chain
-            warmup_steps:   number of Stan warmup steps to run
-            chains:         number of chains for main inference step
-            seed:           random seed
-            out:            progress indicator
-            warmup_results: use this instead of running warmup
+        :param draws: number of draws per chain
+        :param warmup_steps: number of Stan warmup steps to run
+        :param chains: number of chains for main inference step
+        :param seed: random seed
+        :param warmup_results: use this instead of running warmup
+        :return: posterior object
         """
-        write = (out or Progress()).print
         rng_key = random.PRNGKey(seed)
         warmup_key, inference_key, post_key = random.split(rng_key, 3)
-
+        draws, warmup_steps = int(draws), int(warmup_steps)
+        title = f"Full-data posterior inference: {self.name}"
+        print(title)
+        print("=" * len(title))
+        print_devices()
         if warmup_results:
-            write("Skipping warmup")
+            print("Skipping warmup")
         else:
-            write("Starting Stan warmup using NUTS...")
+            print("Starting Stan warmup using NUTS...")
             timer = Timer()
+
+            def warmup_potential(params):
+                return self.cv_potential(params, jnp.array(1.0))
+
             warmup_results = warmup(
-                self.potential,
+                warmup_potential,
                 self.initial_value(),
                 warmup_steps,
                 chains,
                 warmup_key,
             )
-            write(
-                f"      {warmup_steps} warmup draws took {timer}"
+            print(
+                f"      {warmup_steps:,} warmup draws took {timer}"
                 f" ({warmup_steps/timer.sec:.1f} iter/sec)."
             )
+            print(
+                f"      Step size {warmup_results.step_size:.4f}, "
+                f"integration length {warmup_results.int_steps} steps."
+            )
 
-        write(
-            f"Obtaining {draws*chains:,} full-data posterior draws "
+        print(
+            f"HMC for {draws*chains:,} full-data draws "
             f"({chains} chains, {draws:,} draws per chain)..."
         )
         timer = Timer()
-        states = full_data_inference(
-            self.potential, warmup_results, draws, chains, inference_key
+
+        def inference_potential(params, _dummy_fold):
+            return self.cv_potential(params, jnp.array(1.0))
+
+        accum, states = full_data_inference(
+            inference_potential, warmup_results, draws, chains, inference_key
         )
-        write(
-            f"      {chains*draws:,} HMC draws took {timer}"
-            f" ({chains*draws/timer.sec:,.0f} iter/sec)."
-        )
+        divergent_chains = jnp.sum(accum.divergence_count > 0)
+        if divergent_chains > 0:
+            print(f"      WARNING: {divergent_chains} divergent chain(s).")
+        accept_rate_pc = float(100 * jnp.mean(accum.accepted_count) / draws)
+        print(f"      Average HMC acceptance rate {accept_rate_pc:.1f}%.")
 
         # map positions back to model coordinates
-        position_model = vmap(self.to_model_params)(states.position)
+        def inverse_tfm(params):
+            mparam, _ = self.inverse_transform_log_det(params)  # ignore log det
+            return mparam
+
+        position_model = vmap(inverse_tfm)(states.position)
         # want axes to be (chain, draws, ... <variable dims> ...)
         rearranged_positions = {
             var: jnp.swapaxes(draws, axis1=0, axis2=1)
             for (var, draws) in position_model.items()
         }
+        print(
+            f"      {chains*draws:,} HMC draws took {timer}"
+            f" ({chains*draws/timer.sec:,.0f} iter/sec)."
+        )
 
         return _Posterior(
             self,
             post_draws=rearranged_positions,
-            seed=seed,
-            chains=chains,
-            draws=draws,
             warmup_res=warmup_results,
+            accumulator=accum,
             rng_key=post_key,
-            write=write,
         )

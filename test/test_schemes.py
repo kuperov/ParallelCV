@@ -11,9 +11,10 @@ import numpy as np
 from jax import random
 
 from ploo import LFO, LOO, KFold
+from ploo.schemes import LGO
 
 
-class TestCrossValidation(TestCase):
+class TestCrossValidationSchemes(TestCase):
     """Basic checks on cross-validation subclasses"""
 
     def test_loo_linear(self):
@@ -22,8 +23,9 @@ class TestCrossValidation(TestCase):
         self.assertEqual(linear_1.shape, (100,))
         self.assertEqual(linear_1.folds, 100)
         self.assertEqual(list(range(100)), list(linear_1))
-        linear_1_coords = linear_1.pred_index_array()
-        self.assertEqual(linear_1_coords.shape, (100, 1))
+        linear_1_coords = linear_1.pred_indexes()
+        self.assertEqual(linear_1_coords.coords.shape, (100, 1, 1))
+        self.assertClose(linear_1_coords.lengths, np.array([1] * 100))
         linear_1_mask0 = linear_1.mask_for(next(iter(linear_1)))
         self.assertEqual(linear_1_mask0.shape, (100,))
         self.assertEqual(linear_1_mask0[0], 0.0)
@@ -44,10 +46,12 @@ class TestCrossValidation(TestCase):
         self.assertEqual(multi_1.shape, (20, 30))
         self.assertEqual(multi_1.folds, 20 * 30)
         self.assertEqual(len(list(multi_1)), multi_1.folds)
-        multi_1_coords = multi_1.pred_index_array()
-        self.assertEqual(multi_1_coords.shape, (600, 2))
+        multi_1_coords = multi_1.pred_indexes()
+        self.assertEqual(
+            multi_1_coords.coords.shape, (600, 1, 2)
+        )  # folds*npred*data dim
+        self.assertClose(multi_1_coords.lengths, [1] * 600)
         multi_1_fold0 = next(iter(multi_1))
-        self.assertEqual(len(multi_1_fold0), 2)
         multi_1_mask0 = multi_1.mask_for(multi_1_fold0)
         self.assertEqual(multi_1_mask0.shape, (20, 30))
         self.assertEqual(np.sum(multi_1_mask0), multi_1.folds - 1)
@@ -79,6 +83,12 @@ class TestCrossValidation(TestCase):
         kfold_1_mask0 = kfold_1.mask_for(0)
         self.assertEqual(kfold_1_mask0.shape, (100,))
         self.assertEqual(np.sum(kfold_1_mask0), 80)
+        kfold_1_coords = kfold_1.pred_indexes()
+        self.assertClose(kfold_1_coords.lengths, [20] * 5)
+        self.assertEqual(kfold_1_coords.coords.shape, (5, 20, 1))
+        self.assertClose(
+            [len(cs) for cs in kfold_1_coords.coords], kfold_1_coords.lengths
+        )
 
     def test_kfold_multidim(self):
         """Check folds and shape of multidimensional K-fold scheme"""
@@ -90,6 +100,19 @@ class TestCrossValidation(TestCase):
         kfold_1_fold0_mask = kfold_1.mask_for(kfold_1_fold0)
         self.assertEqual(kfold_1_fold0_mask.shape, (20, 10))
         self.assertEqual(np.sum(kfold_1_fold0_mask), 4 * 20 * 10 / 5)
+
+    def test_lgo(self):
+        """Test leave-group-out with made-up group identifiers `grps`"""
+        grps = [1] * 5 + [2] * 3 + [3] * 2
+        lgo_1 = LGO(10, grps)
+        self.assertEqual(lgo_1.shape, (10,))
+        self.assertEqual(lgo_1.folds, 3)
+        lgo_1_summ = lgo_1.mask_array()
+        self.assertClose(lgo_1_summ[0][0:3], [0] * 3)
+        self.assertEqual(np.sum(lgo_1_summ), 3 * 10 - 10)
+        lgo_1_coords = lgo_1.pred_indexes()
+        self.assertEqual(lgo_1_coords.coords.shape, (3, 5, 1))
+        self.assertEqual(lgo_1_coords.lengths.shape, (3,))
 
 
 if __name__ == "__main__":
