@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -10,8 +10,8 @@ from test.util import TestCase
 import numpy as np
 from jax import random
 
-from ploo import LFO, LOO, KFold
-from ploo.schemes import LGO
+from diag import LFO, LOO, KFold
+from diag.schemes import LGO
 
 
 class TestCrossValidationSchemes(TestCase):

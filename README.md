@@ -1,9 +1,8 @@
-ploo: Parallel Brute Force LOO-CV
-=================================
+diag: Convergence diagnostic for parallel MCMC
+==============================================
 
-This is an experiment to try and implement LOO-CV with parallel processing on a GPU.
-
-The project roadmap has been moved to [Github issues](https://github.com/kuperov/ploo/milestones)
+This is an experiment to try and implement an online Rhat on a GPU.
+It would enable brute force cross-validation with parallel processing.
 
 Setting up
 ----------
@@ -12,8 +11,8 @@ You'll need python ≥ 3.7. Alex uses CPython 3.8, although it is probably easie
 
 On a reasonable OS you should be able to create the virtual environment that contains runtime and development dependencies with:
 
-    git clone git@github.com:kuperov/ploo.git
-    cd ploo
+    git clone git@github.com:kuperov/diag.git
+    cd diag
     make config
 
 This will add a pre-commit git hook that runs the linter. The Makefile probably won't work on Windows without WSL.
@@ -33,15 +32,15 @@ Example
 -------
 
 To fit a model, you need to specify its likelihood, prior, and conditional predictive score.
-You do this by providing a subclass of `ploo.Model`:
+You do this by providing a subclass of `diag.Model`:
 
 ```{python}
 from jax import random, numpy as jnp
 import jax.scipy.stats as st
-import ploo
+import diag
 
 
-class GaussianModel(ploo.Model):
+class GaussianModel(diag.Model):
     name = "Gaussian mean model"
 
     def __init__(self, y):

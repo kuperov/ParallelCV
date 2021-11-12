@@ -1,5 +1,5 @@
 #!./venv/bin/python3
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -12,7 +12,7 @@ import numpy as np
 import stan
 from tabulate import tabulate
 
-from ploo.models import GaussianModel
+from diag.models import GaussianModel
 
 GAUSSIAN_MODEL = """// gaussian model for unit tests
 data {

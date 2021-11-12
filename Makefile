@@ -1,10 +1,10 @@
-# ploo package 
+# diag package 
 
 PYTHON=venv/bin/python3
 JUPYTER=venv/bin/jupyter-lab
 
 define HELP
-ploo package Makefile
+diag package Makefile
 
 The following targets are available:
 
@@ -52,16 +52,16 @@ venv:
 	$(PYTHON) setup.py develop
 
 pretty:
-	venv/bin/isort --profile black ploo test
-	venv/bin/black ploo test
+	venv/bin/isort --profile black diag test
+	venv/bin/black diag test
 
 lint:
 	# check code formatting (fix with "make pretty")
-	venv/bin/black --check ploo test
-	venv/bin/isort --profile black --check-only ploo test
+	venv/bin/black --check diag test
+	venv/bin/isort --profile black --check-only diag test
 	# check for obvious bugs or code standard violations
-	venv/bin/flake8 ploo test
-	venv/bin/pylint test  # ploo  # main code not ready to lint yet
+	venv/bin/flake8 diag test
+	venv/bin/pylint test  # diag  # main code not ready to lint yet
 
 gpu:
 	# install gpu-enabled version of jax
@@ -87,5 +87,5 @@ config: venv
 
 clean:
 	@echo Deleting build artefacts. You should manually remove venv.
-	find ploo test -name __pycache__ | xargs rm -r
-	rm -rf .ipynb_checkpoints notebooks/.ipynb_checkpoints .vscode build ploo.egg-info
+	find diag test -name __pycache__ | xargs rm -r
+	rm -rf .ipynb_checkpoints notebooks/.ipynb_checkpoints .vscode build diag.egg-info

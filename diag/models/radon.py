@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -18,9 +18,9 @@ import jax.scipy.stats as st
 import requests
 from jax import numpy as jnp
 
-from ploo import Model
-from ploo.hmc import InfParams
-from ploo.model import ModelParams
+from diag import Model
+from diag.hmc import InfParams
+from diag.model import ModelParams
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "radon_data")
 _DATA_FILE = os.path.join(_DATA_DIR, "radon_all.json")

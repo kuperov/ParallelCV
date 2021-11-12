@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -24,13 +24,13 @@ def _parse_requirements(req_path):
 
 
 setup(
-    name="ploo",
-    version="0.0.1",
-    description="Parallel leave-one-out CV",
+    name="diag",
+    version="0.0.2",
+    description="Parallel MCMC diagnostic experiment",
     long_description=long_description,
     author="Alex Cooper",
     author_email="alex@acooper.org",
-    url="https://github.com/kuperov/ploo",
+    url="https://github.com/kuperov/diag",
     license="LICENSE",
     classifiers=[
         "Development Status :: 3 - Alpha",

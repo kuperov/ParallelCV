@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -12,9 +12,9 @@ import chex
 from jax import numpy as jnp
 from jax import random
 
-from ploo import KFold
-from ploo.model import CrossValidation, _Posterior
-from ploo.models.radon import RadonCountyIntercept
+from diag import KFold
+from diag.model import CrossValidation, _Posterior
+from diag.models.radon import RadonCountyIntercept
 
 
 class TestRadonModel(TestCase):

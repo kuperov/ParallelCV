@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -9,8 +9,8 @@ import arviz as az
 import chex
 import jax
 
-from ploo import compare
-from ploo.models import GaussianVarianceModel
+from diag import compare
+from diag.models import GaussianVarianceModel
 
 
 class TestCrossValidation(unittest.TestCase):

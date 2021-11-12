@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -38,7 +38,7 @@ _ARVIZ_METHODS = _ARVIZ_PLOT + _ARVIZ_OTHER
 
 
 class _Posterior(az.InferenceData):
-    """ploo posterior: captures full-data and loo results
+    """diag posterior: captures full-data and loo results
 
     This is an ArviZ :class:`az.InferenceData` object, so you can use the full
     range of ArviZ posterior exploration features directly on this object.

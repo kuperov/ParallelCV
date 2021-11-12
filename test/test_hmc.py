@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -9,14 +9,14 @@ from jax import numpy as jnp
 from jax import random
 from jax.interpreters.xla import DeviceArray
 
-from ploo.hmc import (
+from diag.hmc import (
     CrossValidationState,
     CVHMCState,
     WarmupResults,
     full_data_inference,
     warmup,
 )
-from ploo.models import GaussianModel
+from diag.models import GaussianModel
 
 
 class TestInference(unittest.TestCase):

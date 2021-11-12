@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -9,7 +9,7 @@ from test.util import TestCase, fixture
 import arviz as az
 from jax import numpy as jnp
 
-from ploo.statistics import ess, split_rhat
+from diag.statistics import ess, split_rhat
 
 
 class TestStatistics(TestCase):

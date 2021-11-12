@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-from ploo import LGO
-from ploo.models import RadonCountyIntercept
+from diag import LGO
+from diag.models import RadonCountyIntercept
 import pandas as pd
 
 model = RadonCountyIntercept()

@@ -1,9 +1,9 @@
 venv
 **/__pycache__
-ploo.egg-info
+diag.egg-info
 **/.ipynb_checkpoints
 .vscode
 *.nogit
 build
 notebooks/Untitled*ipynb
-ploo/models/*_data*
+diag/models/*_data*

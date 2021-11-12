@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -12,8 +12,8 @@ import pandas
 from jax import numpy as jnp
 from scipy import stats as st
 
-from ploo.model import _Posterior
-from ploo.models import GaussianModel
+from diag.model import _Posterior
+from diag.models import GaussianModel
 
 
 class TestGaussian(unittest.TestCase):

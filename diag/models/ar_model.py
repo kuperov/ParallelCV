@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -7,10 +7,10 @@ import jax.scipy.stats as st
 from jax import numpy as jnp
 from jax import random
 
-import ploo
+import diag
 
 
-class AR1(ploo.Model):
+class AR1(diag.Model):
     r"""Simple AR(1) model with LOO
 
     $$ y_t = \mu + \rho y_{t-1} + \sigma \varepsilon_t, \qquad t=1,\dots,(N-1) $$

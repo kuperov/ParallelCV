@@ -1,4 +1,4 @@
-"""ploo is a package for parallel cross-validation
+"""diag is a package for parallel cross-validation
 
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
@@ -12,11 +12,11 @@ import jax.scipy.stats as st
 from jax import numpy as jnp
 from jax import random
 
-import ploo
-from ploo.model import CVFold, InfParams, Model, ModelParams
+import diag
+from diag.model import CVFold, InfParams, Model, ModelParams
 
 
-class GaussianModel(ploo.Model):
+class GaussianModel(diag.Model):
     r"""Simple Gaussian experiment for testing inference
 
     The model is given by
