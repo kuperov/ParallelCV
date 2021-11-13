@@ -124,3 +124,4 @@ def ess(x: chex.ArrayDevice, relative=False):
     tau = -1.0 + 2.0 * jnp.sum(Rho_k, axis=0)
     n_eff = jnp.prod(jnp.array(x.shape[:2])) / tau
     return n_eff
+
