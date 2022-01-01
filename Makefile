@@ -1,7 +1,7 @@
 # diag package 
 
-PYTHON=venv/bin/python3
-JUPYTER=venv/bin/jupyter-lab
+PYTHON=.venv/bin/python3
+JUPYTER=.venv/bin/jupyter-lab
 
 define HELP
 diag package Makefile
@@ -32,12 +32,12 @@ help:
 	@echo "$$HELP"
 
 .PHONY: nb
-nb: venv
+nb: .venv
 	# start notebook server
 	venv/bin/jupyter-lab &
 
 .PHONY: test
-test: venv
+test: .venv
 	# run unit tests
 	$(PYTHON) -m unittest discover --buffer test
 
@@ -52,8 +52,8 @@ venv:
 	$(PYTHON) setup.py develop
 
 pretty:
-	venv/bin/isort --profile black diag test
-	venv/bin/black diag test
+	.venv/bin/isort --profile black diag test
+	.venv/bin/black diag test
 
 lint:
 	# check code formatting (fix with "make pretty")
