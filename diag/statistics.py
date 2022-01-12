@@ -1,79 +1,50 @@
-"""diag is a package for parallel cross-validation
-
-Confidential code not for distribution.
-Alex Cooper <alex@acooper.org>
-
-Diagnostic statistics for MCMC chains.
-"""
 
 import chex
 from jax import lax
 from jax import numpy as jnp
 from scipy.fftpack import next_fast_len
+from typing import Callable, Dict, NamedTuple, Optional, Union
+
+import jax
+import jax.numpy as jnp
+
+import blackjax.adaptation as adaptation
+import blackjax.mcmc as mcmc
+import blackjax.sgmcmc as sgmcmc
+import blackjax.smc as smc
+import blackjax.vi as vi
+from blackjax.base import AdaptationAlgorithm, MCMCSamplingAlgorithm, VIAlgorithm
+from blackjax.progress_bar import progress_bar_scan
+from blackjax.types import Array, PRNGKey, PyTree
+from blackjax.kernels import ghmc
+
+import blackjax
+import jax
+import chex
+import jax.numpy as jnp
+import arviz as az
+from tensorflow_probability.substrates import jax as tfp
+from collections import namedtuple
+import matplotlib.pyplot as plt
+from typing import NamedTuple
+from jax.tree_util import tree_map, tree_structure, tree_flatten, tree_unflatten
+from jax.scipy.special import logsumexp
+import pandas as pd
 
 
-def _split_chains(samples: chex.ArrayDevice) -> chex.ArrayDevice:
-    """Split chains in half, doubling number of chains and halving draws"""
-    _, N = samples.shape
-    return jnp.vstack([samples[:, : (N // 2)], samples[:, (N // 2) :]])
+def estimate_elpd(extended_state: ExtendedState):
+    """Estimate the expected log pointwise predictive density from welford state.
 
-
-def split_rhat(samples: chex.ArrayDevice) -> chex.ArrayDevice:
-    r"""Computes split-R̂ per Gelman et al (2013).
-
-    Let the between-chains variance :math:`B` and within-chain variance :math:`W`
-    for draws :math:`\theta^{(nm)}` be given by
-
-      .. math::
-
-         B = \frac{N}{M-1}\sum_{m=1}^N\left(\bar{\theta}^{(\cdot m)}
-         - \bar{\theta}^{\cdot\cdot}\right)^2
-
-         W = \frac{1}{M}\sum_{m=1}^M \left[\frac{1}{N-1}\sum_{m=1}^N
-         \left(\theta^{(nm)}-\bar{\theta}^{(\cdot m)}\right)\right]^2
-
-    Then the split-:math:`\hat{R}` is given by
-
-      .. math::
-
-         \hat{R} = \sqrt{\frac{N-1}{N} + \frac{B}{NW}}
-
-    :param samples: 2D array of samples θ⁽ⁿᵐ⁾ (chains m on axis 0, draw n axis 1)
-
-    :return: Estimate of the ratio :math:`\hat{R}`
+    The resulting elpd is in sum scale, that is we average over (half)
+    chains and sum over folds.
     """
-    assert len(samples.shape) == 2, "Samples should be 2D (scalars only)"
-    ssamples = _split_chains(samples)
-    _, N = ssamples.shape
-    _, within_var, var_plus = chain_variance(ssamples)
-    return jnp.sqrt(var_plus / within_var)
-
-
-def chain_variance(samples):
-    r"""Computes split-R̂ per Gelman et al (2013)
-
-    Let the between-chains variance :math:`B` and within-chain variance :math:`W`
-    for draws :math:`\theta^{(nm)}` be given by
-
-      .. math::
-
-         B = \frac{N}{M-1}\sum_{m=1}^N\left(\bar{\theta}^{(\cdot m)}
-         - \bar{\theta}^{\cdot\cdot}\right)^2
-
-         W = \frac{1}{M}\sum_{m=1}^M \left[\frac{1}{N-1}\sum_{m=1}^N
-         \left(\theta^{(nm)}-\bar{\theta}^{(\cdot m)}\right)\right]^2
-
-    :param samples: 2D array of samples θ⁽ⁿᵐ⁾ (chains m on axis 0, draw n axis 1)
-
-    :return: (B, W, var_plus) tuple
-    """
-    M, N = samples.shape
-    theta_m = jnp.mean(samples, axis=1)  # chain averages θ⁽⋅ᵐ⁾
-    s_m = jnp.var(samples, axis=1, ddof=1)  # sample variances sₘ
-    between_var = N * jnp.var(theta_m, ddof=1)  # between-chain variance
-    within_var = jnp.sum(s_m) / M  # within-chain variance
-    var_est = within_var * (N - 1) / N + between_var / N
-    return between_var, within_var, var_est
+    # AVERAGE over (half) chains (chain dim is axis 1, chain half dim is axis 2)
+    nchains, nhalfs = extended_state.log_pred_mean.shape[1:3]
+    fold_means = logsumexp(extended_state.log_pred_mean, axis=(1,2)) - jnp.log(nchains * nhalfs)
+    fold_means = fold_means.squeeze()
+    # SUM over folds
+    elpd = jnp.sum(fold_means)
+    return float(elpd)
 
 
 def ess(x: chex.ArrayDevice, relative=False):
