@@ -1,4 +1,3 @@
-
 import chex
 import jax.numpy as jnp
 
@@ -13,7 +12,8 @@ def online_cv():
             make_initial_pos=make_initial_pos,
             num_chains=10,
             num_samples=2000,
-            warmup_iter=1000)
+            warmup_iter=1000,
+        )
         return results
 
     online_fold_states = jax.vmap(make_fold)(jnp.arange(5))
@@ -29,9 +29,12 @@ def offline_cv_fold(fold_id):
             make_initial_pos=make_initial_pos,
             num_chains=10,
             num_samples=2000,
-            warmup_iter=1000)
+            warmup_iter=1000,
+        )
         pos = trace.position
-        theta_dict = az.convert_to_inference_data(dict(beta=pos.beta, sigsq=jax.vmap(sigsq_t.forward)(pos.sigsq)))
+        theta_dict = az.convert_to_inference_data(
+            dict(beta=pos.beta, sigsq=jax.vmap(sigsq_t.forward)(pos.sigsq))
+        )
         trace_az = az.convert_to_inference_data(theta_dict)
         return results, trace_az
 
@@ -128,13 +131,13 @@ class KFoldCVScheme(CVScheme):
 
 class PointwiseKFoldCVScheme(CVScheme):
     """Pointwise K-fold scheme.
-    
+
     This is an (inefficient) scheme for evaluating K-fold pointwise. It's like
     LOO but it uses the training sets from K-fold.
 
     Best use with lengths T that are multiples of the block size
     """
-    
+
     def __init__(self, T: int, k: int) -> None:
         self.k = k
         self.block_size = T // k
@@ -142,7 +145,7 @@ class PointwiseKFoldCVScheme(CVScheme):
 
     def name(self) -> str:
         return f"Pointwise {self.k}-fold"
-    
+
     def n_folds(self) -> int:
         return self.T
 
@@ -150,7 +153,7 @@ class PointwiseKFoldCVScheme(CVScheme):
         # The k-fold training set: missing the whole block
         block = t // self.block_size
         return jnp.arange(self.T) // self.block_size != block
-    
+
     def test_mask(self, t: int) -> chex.Array:
         # The LOO testing set: just one variate
         return jnp.arange(self.T) == t
@@ -179,15 +182,11 @@ class HVBlockCVScheme(CVScheme):
 
     def train_mask(self, i: int) -> chex.Array:
         idxs = jnp.arange(self.T)
-        return jnp.logical_or(
-            idxs < i - self.v - self.h,
-            idxs > i + self.v + self.h)
+        return jnp.logical_or(idxs < i - self.v - self.h, idxs > i + self.v + self.h)
 
     def test_mask(self, i: int) -> chex.Array:
         idxs = jnp.arange(self.T)
-        return jnp.logical_and(
-            idxs >= i - self.v,
-            idxs <= i + self.v)
+        return jnp.logical_and(idxs >= i - self.v, idxs <= i + self.v)
 
 
 class LFOCVScheme(CVScheme):
@@ -199,6 +198,7 @@ class LFOCVScheme(CVScheme):
         v: size of the validation block
         m: size of the initial margin
     """
+
     def __init__(self, T: int, h: int, v: int, m: int) -> None:
         super().__init__(T)
         self.h = h
@@ -213,10 +213,8 @@ class LFOCVScheme(CVScheme):
 
     def train_mask(self, i: int) -> chex.Array:
         idxs = jnp.arange(self.T)
-        return (idxs < i + self.m - self.v - self.h)
+        return idxs < i + self.m - self.v - self.h
 
     def test_mask(self, i: int) -> chex.Array:
         idxs = jnp.arange(self.T)
-        return jnp.logical_and(
-            idxs >= i + self.m - self.v,
-            idxs <= i + self.m + self.v)
+        return jnp.logical_and(idxs >= i + self.m - self.v, idxs <= i + self.m + self.v)

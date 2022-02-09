@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 
+import pandas as pd
+
 from diag import LGO
 from diag.models import RadonCountyIntercept
-import pandas as pd
 
 model = RadonCountyIntercept()
 post = model.inference(draws=2e3, chains=4, warmup_steps=1e3, seed=42)

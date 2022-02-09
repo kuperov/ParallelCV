@@ -3,13 +3,8 @@
 Confidential code not for distribution.
 Alex Cooper <alex@acooper.org>
 """
-import time
-from typing import Dict
 
-import chex
 import jax
-import numpy as np
-import xarray as xr
 
 
 def print_devices():
@@ -23,11 +18,13 @@ def print_devices():
 
 def to_arviz(theta: Theta, post_id: int) -> az.InferenceData:
     """Export a chain of draws to Arviz for visualization, etc.
-    
+
     Args:
         theta: pytreee of draws
         post_id: zero-based posterior id
     """
     pos = tree_map(lambda x: x[post_id, ...], theta)
-    theta_dict = az.convert_to_inference_data(dict(beta=pos.beta, sigsq=jax.vmap(sigsq_t.forward)(pos.sigsq)))
+    theta_dict = az.convert_to_inference_data(
+        dict(beta=pos.beta, sigsq=jax.vmap(sigsq_t.forward)(pos.sigsq))
+    )
     return az.convert_to_inference_data(theta_dict)
