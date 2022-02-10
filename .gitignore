@@ -7,3 +7,4 @@ diag.egg-info
 build
 notebooks/Untitled*ipynb
 diag/models/*_data*
+pcv.egg-info/
