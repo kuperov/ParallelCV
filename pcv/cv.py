@@ -1,5 +1,6 @@
 import chex
 import jax.numpy as jnp
+import arviz as az
 
 
 def online_cv():
