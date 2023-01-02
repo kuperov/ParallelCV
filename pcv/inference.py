@@ -450,10 +450,10 @@ def online_inference_loop(
         state=carry_state_1h.state,
         rng_key=carry_state_1h.rng_key,
         pred_ws=welford_init(log_pred(theta_center)),
-        pred_tfm_ws=welford_init(apply_sigmoid(pred_sigp, log_pred(theta_center))),  # or just zero?
+        pred_tfm_ws=welford_init(0.),
         log_pred_mean=log_pred(theta_center) - log_half_samp,
         param_ws=tree_map(welford_init, theta_center),
-        param_tfm_ws=tree_map(welford_init, apply_sigmoid_tree(param_sigp, theta_center)),
+        param_tfm_ws=tree_map(welford_init, tree_map(jnp.zeros_like, theta_center)),
         divergences=0,
     )
     carry_state_2h, _ = jax.lax.scan(
@@ -579,7 +579,7 @@ def fold_posterior(
     # now that we have adaption parameters, estimate rough mean and variance of parameters and log predictive
     # in order to construct the sigmoid transformation
     tfm_states = jax.vmap(transform_inference_loop, in_axes=(0, None, 0, None, None, None))(
-        sampling_keys, kernel, final_warmup_state, num_samples, log_p, centers
+        sampling_keys, kernel, final_warmup_state, warmup_iter, log_p, centers
     )
     param_tfmp: PyTree = tree_map(sigmoid_transform_param, tfm_states.param_ws, is_leaf=lambda x: isinstance(x, WelfordState))
     pred_tfmp: SigmoidParam = sigmoid_transform_param(tfm_states.pred_ws)
