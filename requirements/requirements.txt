@@ -1,7 +1,7 @@
 arviz
-blackjax
+blackjax @ git+https://github.com/blackjax-devs/blackjax.git
 chex
-distrax @ git+https://github.com/kuperov/distrax.git@downgrade_jaxlib
+distrax
 jax
 jaxlib
 matplotlib
