@@ -107,10 +107,10 @@ class TfmExtendedState(NamedTuple):
     state: blackjax.mcmc.ghmc.GHMCState  # current HMC state
     rng_key: chex.Array  # current random seed
     pred_ws: 'WelfordState'  # accumulator for log predictive
-    pred_ws_tfm: 'WelfordState' # accumulator for transformed log predictive
+    pred_tfm_ws: 'WelfordState' # accumulator for transformed log predictive
     log_pred_mean: float  # log of mean predictive
     param_ws: 'WelfordState'  # accumulator for parameters
-    param_ws_tfm: 'WelfordState'  # accumulator for transformed parameters
+    param_tfm_ws: 'WelfordState'  # accumulator for transformed parameters
     divergences: chex.Array  # divergence counts (int array)
 
 
@@ -254,10 +254,16 @@ def welford_var(state: WelfordState):
     return (state.Ex2 - state.Ex**2 / state.n) / (state.n - 1)
 
 
-def sigmoid_transform(state: WelfordState, axis: Tuple = 0) -> Callable:
-    """Return a sigmoid transformation using mean and variance estimated from welford state.
+class SigmoidParam(NamedTuple):
+    mean: chex.Array
+    std: chex.Array
+
+
+def sigmoid_transform_param(state: WelfordState, axis: Tuple = 0) -> SigmoidParam:
+    """Return sigmoid transform parameters estimated from welford state.
     
     This method combines multiple means and variances by averaging over the specified axis.
+    For now it is just the mean and sd but it could change.
 
     Params:
         state: Welford state with leaves in the shape of (num_chains, param_dim1, ...)
@@ -268,12 +274,36 @@ def sigmoid_transform(state: WelfordState, axis: Tuple = 0) -> Callable:
     """
     mean = welford_mean(state).mean(axis=axis)
     std = jnp.sqrt(welford_var(state).mean(axis=axis))
-    return lambda x: stats.norm.cdf(x, loc=mean, scale=std)
+    return SigmoidParam(mean=mean, std=std)
+
+
+def apply_sigmoid(param: SigmoidParam, x: chex.Array) -> chex.Array:
+    """Apply sigmoid transform to input.
+
+    Shape of param and x should match.
+
+    Params:
+        param: SigmoidParam
+        x: input to transform
+    """
+    return stats.norm.cdf(x, loc=param.mean, scale=param.std)
+
+
+def apply_sigmoid_tree(param: PyTree, x: PyTree) -> PyTree:
+    """Apply sigmoid transform to input.
+
+    Shape of param and x should match.
+
+    Params:
+        param: PyTree of SigmoidParams
+        x: PyTree of arrays, input to transform
+    """
+    return tree_map(apply_sigmoid, param, x, is_leaf=lambda x: isinstance(x, SigmoidParam))
 
 
 # single chain inference loop we will run in parallel using vmap
 def offline_inference_loop(
-    rng_key, kernel, initial_state, num_samples, log_pred, _param_transforms, _pred_transform, theta_center
+    rng_key, kernel, initial_state, num_samples, log_pred, _param_sigp, _pred_sigp, theta_center
 ):
     """Online version of inference loop.
     
@@ -287,8 +317,8 @@ def offline_inference_loop(
         initial_state: initial state for inference
         num_samples: number of samples to draw
         log_pred: log predictive density function
-        _param_transforms: not used
-        _pred_transform: not used
+        _param_sigp: not used
+        _pred_sigp: not used
         theta_center: center of the parameter distribution (used for initialization)
     
     Returns:
@@ -351,7 +381,7 @@ def offline_inference_loop(
 
 
 def online_inference_loop(
-    rng_key, kernel, initial_state, num_samples, log_pred, param_transforms, pred_transform, theta_center
+    rng_key, kernel, initial_state, num_samples, log_pred, param_sigp, pred_sigp, theta_center
 ):
     """Online version of inference loop.
     
@@ -365,8 +395,8 @@ def online_inference_loop(
         initial_state: initial state for inference
         num_samples: number of samples to draw
         log_pred: log predictive density function
-        param_transforms: PyTree of transformation functions of same structure as Theta
-        pred_transform: transformation function for predictive density
+        param_sigp: PyTree of transformation parameters of same structure as Theta
+        pred_sigp: transformation parameters for predictive density
         theta_center: center of the parameter distribution (used for initialization)
     
     Returns:
@@ -383,10 +413,10 @@ def online_inference_loop(
         carry_log_pred_mean = ext_state.log_pred_mean + jnp.log1p(
             jnp.exp(elpd_contrib - ext_state.log_pred_mean)
         )
-        tfm_pos = tree_map(param_transforms, chain_state.position)
+        tfm_pos = apply_sigmoid_tree(param_sigp, chain_state.position)
         div_count = ext_state.divergences + 1.0 * chain_info.is_divergent
         carry_pred_ws = welford_add(elpd_contrib, ext_state.pred_ws)
-        carry_pred_tfm_ws = welford_add(pred_transform(elpd_contrib), ext_state.pred_tfm_ws)
+        carry_pred_tfm_ws = welford_add(apply_sigmoid(pred_sigp, elpd_contrib), ext_state.pred_tfm_ws)
         carry_param_ws = tree_map(welford_add, chain_state.position, ext_state.param_ws)
         carry_param_tfm_ws = tree_map(welford_add, tfm_pos, ext_state.param_tfm_ws)
         carry_state = TfmExtendedState(
@@ -406,23 +436,24 @@ def online_inference_loop(
         initial_state,
         rng_key,
         pred_ws=welford_init(log_pred(theta_center)),
-        pred_tfm_ws=welford_init(pred_transform(log_pred(theta_center))),  # or just zero?
+        pred_tfm_ws=welford_init(0.),
         log_pred_mean=log_pred(theta_center) - log_half_samp,
         param_ws=tree_map(welford_init, theta_center),
-        param_ws_tfm=tree_map(welford_init, tree_map(param_transforms, theta_center)),
+        param_tfm_ws=tree_map(welford_init, tree_map(jnp.zeros_like, theta_center)),
         divergences=0,
     )
     carry_state_1h, _ = jax.lax.scan(
         one_mcmc_step, initial_state_1h, jnp.arange(0, num_samples // 2)
     )
     # second half of chain - continue at same point but accumulate into new welford states
-    initial_state_2h = ExtendedState(
-        carry_state_1h.state,
-        carry_state_1h.rng_key,
+    initial_state_2h = TfmExtendedState(
+        state=carry_state_1h.state,
+        rng_key=carry_state_1h.rng_key,
         pred_ws=welford_init(log_pred(theta_center)),
-        pred_tfm_ws=welford_init(pred_transform(log_pred(theta_center))),  # or just zero?
+        pred_tfm_ws=welford_init(apply_sigmoid(pred_sigp, log_pred(theta_center))),  # or just zero?
         log_pred_mean=log_pred(theta_center) - log_half_samp,
-        param_ws_tfm=tree_map(welford_init, tree_map(param_transforms, theta_center)),
+        param_ws=tree_map(welford_init, theta_center),
+        param_tfm_ws=tree_map(welford_init, apply_sigmoid_tree(param_sigp, theta_center)),
         divergences=0,
     )
     carry_state_2h, _ = jax.lax.scan(
@@ -500,7 +531,9 @@ def fold_posterior(
     num_samples,
     warmup_iter,
 ):
-    """Compute posterior for a single fold.
+    """Compute posterior for a single fold using parallel chains.
+
+    This function is the building block for parallel CV.
 
     Args:
         prng_key: jax.random.PRNGKey, random number generator state
@@ -548,12 +581,12 @@ def fold_posterior(
     tfm_states = jax.vmap(transform_inference_loop, in_axes=(0, None, 0, None, None, None))(
         sampling_keys, kernel, final_warmup_state, num_samples, log_p, centers
     )
-    param_tfm: PyTree = tree_map(sigmoid_transform, tfm_states.param_ws, is_leaf=lambda x: isinstance(x, WelfordState))
-    pred_tfm: Callable = sigmoid_transform(tfm_states.pred_ws)
+    param_tfmp: PyTree = tree_map(sigmoid_transform_param, tfm_states.param_ws, is_leaf=lambda x: isinstance(x, WelfordState))
+    pred_tfmp: SigmoidParam = sigmoid_transform_param(tfm_states.pred_ws)
 
     # run chain
     results = jax.vmap(inference_loop, in_axes=(0, None, 0, None, None, None, None, None))(
-        sampling_keys, kernel, final_warmup_state, num_samples, log_p, param_tfm, pred_tfm, centers
+        sampling_keys, kernel, final_warmup_state, num_samples, log_p, param_tfmp, pred_tfmp, centers
     )
     return results
 
@@ -645,14 +678,18 @@ def rhat_summary(fold_states):
         pandas data frame summarizing rhats
     """
     par_rh, par_frh = rhat(fold_states.param_ws)
+    par_rh_tfm, par_frh_tfm = rhat(fold_states.param_tfm_ws)
     pred_rh, pred_frh = rhat(fold_states.pred_ws)
+    pred_rh_tfm, pred_frh_tfm = rhat(fold_states.pred_tfm_ws)
     K = pred_rh.shape[0]
     rows = []
     max_row = None
     for i in range(K):
         for (par, pred, meas) in [
             (par_rh, pred_rh, "Split Rhat"),
+            (par_rh_tfm, pred_rh_tfm, "Split Rhat (transformed)"),
             (par_frh, pred_frh, "Folded Split Rhat"),
+            (par_frh_tfm, pred_frh_tfm, "Folded Split Rhat (transformed)"),
         ]:
             row = {"fold": f"Fold {i}", "measure": meas}
             for j, parname in enumerate(par._fields):
