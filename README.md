@@ -14,16 +14,5 @@ On a reasonable OS you should be able to create the virtual environment that con
     cd ParallelCV
     make config
 
-This will add a pre-commit git hook that runs the linter. The Makefile probably won't work on Windows without WSL.
-
-Check everything is working by running the unit tests:
-
-    make test
-
-Before commiting code, run the code formatter and linter (the pre-commit hook should lint automatically):
-
-    make pretty
-    make lint
-
 If you don't already have a python development environment you prefer, VSCode is free and has a shallow learning curve.
 
