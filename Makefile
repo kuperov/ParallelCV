@@ -34,7 +34,7 @@ help:
 .PHONY: nb
 nb: .venv
 	# start notebook server
-.venv/bin/jupyter-lab &
+	.venv/bin/jupyter-lab &
 
 .PHONY: test
 test: .venv
@@ -61,7 +61,7 @@ lint:
 	.venv/bin/isort --profile black --check-only diag test
 	# check for obvious bugs or code standard violations
 	.venv/bin/flake8 diag test
-	.venv/bin/pylint test  # diag  # main code not ready to lint yet
+	.venv/bin/pylint test pcv  # main code not ready to lint yet
 
 gpu:
 	# install gpu-enabled version of jax
@@ -81,7 +81,8 @@ fixtures:
 
 config:.venv
 	# Configure the development environment, if not already
-	cp --no-clobber -r scripts/vscode .vscode
+	mkdir -p .vscode
+	cp --no-clobber -r scripts/vscode/* .vscode/
 	# Set up git commit hooks, if not already
 	cp --no-clobber scripts/git-hooks/* .git/hooks
 
