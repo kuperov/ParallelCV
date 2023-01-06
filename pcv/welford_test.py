@@ -1,7 +1,9 @@
 import unittest
-from pcv.welford import *
-import jax.numpy as jnp
+
 import jax
+import jax.numpy as jnp
+
+from pcv.welford import *
 
 
 class TestUnivariateWelford(unittest.TestCase):

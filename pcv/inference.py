@@ -1,16 +1,16 @@
-from typing import Callable, NamedTuple, Dict, Tuple
+from typing import Callable, Dict, NamedTuple, Tuple
 
 import blackjax
 import blackjax.adaptation as adaptation
 import chex
 import jax
 import jax.numpy as jnp
-from jax.scipy import stats
 import pandas as pd
 from blackjax.kernels import ghmc
 from blackjax.types import PRNGKey, PyTree
 from jax import lax
 from jax import numpy as jnp
+from jax.scipy import stats
 from jax.scipy.special import logsumexp
 from jax.tree_util import tree_map
 from scipy.fftpack import next_fast_len
@@ -155,56 +155,6 @@ def estimate_elpd(extended_state: ExtendedState):
     # SUM over folds
     elpd = jnp.sum(fold_means)
     return float(elpd)
-
-
-def ess(x: chex.ArrayDevice, relative=False):
-    r"""Effective sample size as described in Vehtari et al 2021 and Geyer 2011.
-
-    Adapted for JAX from pyro implementation, see:
-    https://github.com/pyro-ppl/numpyro/blob/048d2c80d9f4087aa9614225568bb88e1f74d669/numpyro/diagnostics.py#L148
-    Some parts also adapted from ArviZ, see:
-    https://github.com/arviz-devs/arviz/blob/8115c7a1b8046797229b654c8389b7c26769aa82/arviz/stats/diagnostics.py#L65
-
-    :param samples: 2D array of samples
-    :param relative: if true return relative measure
-    """  # noqa: B950
-    assert x.ndim >= 2
-    assert x.shape[1] >= 2
-
-    # find autocovariance for each chain at lag k
-    N = x.shape[1]
-    M = next_fast_len(N)
-    # transpose axis with -1 for Fourier transform
-    acov_x = jnp.swapaxes(x, 1, -1)
-    # centering x
-    centered_signal = acov_x - acov_x.mean(axis=-1, keepdims=True)
-    freqvec = jnp.fft.rfft(centered_signal, n=2 * M, axis=-1)
-    autocorr = jnp.fft.irfft(freqvec * jnp.conjugate(freqvec), n=2 * M, axis=-1)
-    # truncate and normalize the result, then transpose back to original shape
-    autocorr = autocorr[..., :N]
-    autocorr = autocorr / jnp.arange(N, 0.0, -1)
-    autocorr = autocorr / autocorr[..., :1]
-    autocorr = jnp.swapaxes(autocorr, 1, -1)
-    gamma_k_c = autocorr * x.var(axis=1, keepdims=True)
-    # find autocorrelation at lag k (from Stan reference)
-    _, var_within, var_estimator = chain_variance(x)
-    rho_k = jnp.concatenate(
-        [
-            jnp.array([1.0]),
-            jnp.array(1.0 - (var_within - gamma_k_c.mean(axis=0)) / var_estimator)[1:],
-        ]
-    )
-    # initial positive sequence (formula 1.18 in [1]) applied for autocorrelation
-    Rho_k = rho_k[:-1:2, ...] + rho_k[1::2, ...]
-    # initial monotone (decreasing) sequence
-    Rho_k_pos = jnp.clip(Rho_k[1:, ...], a_min=0, a_max=None)
-    _, init_mon_seq = lax.scan(
-        lambda c, a: (jnp.minimum(c, a), jnp.minimum(c, a)), jnp.inf, Rho_k_pos
-    )
-    Rho_k = jnp.concatenate([Rho_k[:1], init_mon_seq])
-    tau = -1.0 + 2.0 * jnp.sum(Rho_k, axis=0)
-    n_eff = jnp.prod(jnp.array(x.shape[:2])) / tau
-    return n_eff
 
 
 # stack arrays in pytrees

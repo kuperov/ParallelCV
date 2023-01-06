@@ -1,6 +1,6 @@
+import arviz as az
 import chex
 import jax.numpy as jnp
-import arviz as az
 
 
 class CVScheme:
