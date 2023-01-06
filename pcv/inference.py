@@ -15,6 +15,8 @@ from jax.scipy.special import logsumexp
 from jax.tree_util import tree_map
 from scipy.fftpack import next_fast_len
 
+from .welford import *
+
 
 def run_meads(
     logjoint_density_fn: Callable,
@@ -213,45 +215,6 @@ def tree_stack(trees):
 # stack arrays in pytrees
 def tree_concat(trees):
     return tree_map(lambda *xs: jnp.concatenate(xs, axis=0), *trees)
-
-
-class WelfordState(NamedTuple):
-    K: chex.Array  # central estimate of data
-    Ex: chex.Array  # sum of deviations from K
-    Eax: chex.Array  # sum of absolute deviations from K
-    Ex2: chex.Array  # sum of squared deviations from K
-    n: chex.Array  # number of data points
-
-
-def welford_init(K: chex.Array) -> WelfordState:
-    """Initialize new welford algorithm state.
-
-    Args:
-      K: estimated mean value of data. Same shape as data.
-    """
-    return WelfordState(K=K * 1.0, Ex=K * 0.0, Eax=K * 0.0, Ex2=K * 0.0, n=K * 0)
-
-
-def welford_add(x: chex.Array, state: WelfordState) -> WelfordState:
-    return WelfordState(
-        K=state.K,
-        Ex=state.Ex + x - state.K,
-        Eax=state.Eax + jnp.abs(x - state.K),
-        Ex2=state.Ex2 + (x - state.K) ** 2,
-        n=state.n + 1,
-    )
-
-
-def welford_mean(state: WelfordState):
-    return state.K + state.Ex / state.n
-
-
-def welford_mad(state: WelfordState):
-    return state.Eax / state.n
-
-
-def welford_var(state: WelfordState):
-    return (state.Ex2 - state.Ex**2 / state.n) / (state.n - 1)
 
 
 class SigmoidParam(NamedTuple):

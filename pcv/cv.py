@@ -3,43 +3,6 @@ import jax.numpy as jnp
 import arviz as az
 
 
-def online_cv():
-    def make_fold(fold_id):
-        results = fold_posterior(
-            prng_key=inference_key,
-            inference_loop=online_inference_loop,
-            logjoint_density=lambda theta: logjoint_density(theta, fold_id),
-            log_p=lambda theta: log_pred(theta, fold_id),
-            make_initial_pos=make_initial_pos,
-            num_chains=10,
-            num_samples=2000,
-            warmup_iter=1000,
-        )
-        return results
-
-    online_fold_states = jax.vmap(make_fold)(jnp.arange(5))
-
-
-def offline_cv_fold(fold_id):
-    def replay_fold(fold_id, inference_key=inference_key):
-        results, trace = fold_posterior(
-            prng_key=inference_key,
-            inference_loop=offline_inference_loop,
-            logjoint_density=lambda theta: logjoint_density(theta, fold_id),
-            log_p=lambda theta: log_pred(theta, fold_id),
-            make_initial_pos=make_initial_pos,
-            num_chains=10,
-            num_samples=2000,
-            warmup_iter=1000,
-        )
-        pos = trace.position
-        theta_dict = az.convert_to_inference_data(
-            dict(beta=pos.beta, sigsq=jax.vmap(sigsq_t.forward)(pos.sigsq))
-        )
-        trace_az = az.convert_to_inference_data(theta_dict)
-        return results, trace_az
-
-
 class CVScheme:
     """Generic CV scheme class
 
