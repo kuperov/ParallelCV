@@ -45,6 +45,21 @@ def welford_var(state: WelfordState, ddof=1):
     return (state.Ex2 - state.Ex**2 / state.n) / (state.n - ddof)
 
 
+def welford_var_combine(state: WelfordState, ddof=1, comb_axis=(1,2), out_axis=0):
+    """Univariate variance for data
+    
+    Axis should be the axis over which the data is combined.
+    """
+    ex2 = state.Ex2.sum(axis=comb_axis)
+    ex = state.Ex.sum(axis=comb_axis)
+    n = state.n.sum(axis=comb_axis)
+    K = jnp.reshape(state.K, (-1))[0]  # there has to be a better way than this
+    # TODO: check K is the same for all elements of the batch
+    def f(i):
+        return (ex2[i] - ex[i]**2 / n[i]) / (n[i] - ddof)
+    return jax.vmap(f)(jnp.arange(ex2.shape[out_axis]))
+
+
 class BatchWelfordState(NamedTuple):
     """Welford state object for batch means of univariate data."""
     batch_size: int
@@ -125,6 +140,20 @@ def vector_welford_cov(state: VectorWelfordState, ddof=1):
     """Covariance matrix for data"""
     return (state.Ex2 - jnp.outer(state.Ex, state.Ex) / state.n) / (state.n - ddof)
 
+def vector_welford_cov_combine(state:VectorWelfordState, ddof=1, comb_axis=(1,2), out_axis=0):
+    """Covariance matrix for data
+    
+    Axis should be the axis over which the data is combined.
+    """
+    ex2 = state.Ex2.sum(axis=comb_axis)
+    ex = state.Ex.sum(axis=comb_axis)
+    n = state.n.sum(axis=comb_axis)
+    K = jnp.reshape(state.K, (-1))[0]  # there has to be a better way than this
+    # TODO: check K is the same for all elements of the batch
+    def f(i):
+        return (ex2[i] - jnp.outer(ex[i], ex[i]) / n[i]) / (n[i] - ddof)
+    return jax.vmap(f)(jnp.arange(ex2.shape[out_axis]))
+
 
 class BatchVectorWelfordState(NamedTuple):
     batch_size: int
@@ -165,7 +194,7 @@ def batch_vector_welford_mean(state: BatchVectorWelfordState):
 
 def batch_vector_welford_cov(state: BatchVectorWelfordState, ddof=1):
     def whole_cov():  # total is even multiple of batch size
-        return vector_welford_cov(state.batches)
+        return vector_welford_cov(state.batches, ddof=ddof)
     def resid_cov():  # include current batch
         return vector_welford_cov(vector_welford_add(vector_welford_mean(state.current), state.batches), ddof=ddof)
     return jax.lax.cond(state.current.n == 0, whole_cov, resid_cov)
