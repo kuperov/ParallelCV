@@ -2,7 +2,6 @@ from typing import Callable, Dict, NamedTuple, Tuple, Union
 
 import blackjax
 import blackjax.adaptation as adaptation
-import chex
 import jax
 import jax.numpy as jnp
 import pandas as pd
@@ -260,7 +259,8 @@ def offline_inference_loop(
     Returns:
         TfmExtendedState for two chain halves
     """
-    log_half_samp = jnp.log(0.5 * num_samples + 1)  # +1 for initialization
+    log_half_samp = jnp.log(0.5 * num_samples)
+    init_pred = log_pred(theta_center) - log_half_samp # initial guess for predictive density (for numerical stability)
 
     def one_mcmc_step(ext_state, _idx):
         i_key, carry_key = jax.random.split(ext_state.rng_key)
@@ -284,36 +284,48 @@ def offline_inference_loop(
         )
         return carry_state, chain_state
 
+    def remove_init_pred(state):
+        # remove initial guess for predictive density
+        return ExtendedState(
+            state=state.state,
+            rng_key=state.rng_key,
+            pred_ws=state.pred_ws,
+            log_pred_mean=state.log_pred_mean + jnp.log1p(
+                -jnp.exp(init_pred - state.log_pred_mean)
+            ),
+            param_ws=state.param_ws,
+            divergences=state.divergences,
+        )
+
     # first half of chain
     initial_state_1h = ExtendedState(
         initial_state,
         rng_key,
         pred_ws=welford_init(log_pred(theta_center)),
-        log_pred_mean=log_pred(theta_center) - log_half_samp,
+        log_pred_mean=init_pred,
         param_ws=tree_map(welford_init, theta_center),
         divergences=0,
     )
     carry_state_1h, states_1h = jax.lax.scan(
         one_mcmc_step, initial_state_1h, jnp.arange(0, num_samples // 2)
     )
+    carry_state_1h = remove_init_pred(carry_state_1h)
     # second half of chain - continue at same point but accumulate into new welford states
     initial_state_2h = ExtendedState(
         carry_state_1h.state,
         carry_state_1h.rng_key,
         pred_ws=welford_init(log_pred(theta_center)),
-        log_pred_mean=log_pred(theta_center) - log_half_samp,
+        log_pred_mean=init_pred,
         param_ws=tree_map(welford_init, theta_center),
         divergences=0,
     )
     carry_state_2h, states_2h = jax.lax.scan(
         one_mcmc_step, initial_state_2h, jnp.arange(num_samples // 2, num_samples)
     )
-    return tree_stack((carry_state_1h, carry_state_2h,)), tree_concat(
-        (
-            states_1h,
-            states_2h,
-        )
-    )
+    carry_state_2h = remove_init_pred(carry_state_2h)
+    final_state = tree_stack((carry_state_1h, carry_state_2h,))
+    trace = tree_concat((states_1h, states_2h,))
+    return final_state, trace
 
 
 def online_inference_loop(
@@ -380,8 +392,8 @@ def online_inference_loop(
     def remove_init_pred(state):
         # remove initial guess for predictive density
         return TfmExtendedState(
-            state.state,
-            state.rng_key,
+            state=state.state,
+            rng_key=state.rng_key,
             pred_ws=state.pred_ws,
             pred_tfm_ws=state.pred_tfm_ws,
             pred_bws=state.pred_bws,
@@ -402,7 +414,7 @@ def online_inference_loop(
         pred_ws=welford_init(init_pred),
         pred_bws=batch_welford_init(init_pred, batch_size),
         pred_tfm_ws=welford_init(0.),
-        log_pred_mean=init_pred - log_half_samp,
+        log_pred_mean=init_pred,
         param_ws=tree_map(welford_init, theta_center),
         param_tfm_ws=tree_map(welford_init, tree_map(jnp.zeros_like, theta_center)),
         param_bws=batch_vector_welford_init(vec_theta_center, batch_size),
@@ -420,7 +432,7 @@ def online_inference_loop(
         pred_ws=welford_init(init_pred),
         pred_bws=batch_welford_init(init_pred, batch_size),
         pred_tfm_ws=welford_init(0.),
-        log_pred_mean=init_pred - log_half_samp,
+        log_pred_mean=init_pred,
         param_ws=tree_map(welford_init, theta_center),
         param_tfm_ws=tree_map(welford_init, tree_map(jnp.zeros_like, theta_center)),
         param_bws=batch_vector_welford_init(vec_theta_center, batch_size),
