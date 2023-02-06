@@ -3,6 +3,8 @@ pcv: Convergence diagnostic for parallel MCMC
 
 This repo implements an online convergence diagnostic (Rhat) on a GPU. It enables brute force cross-validation and posterior stacking with parallel processing.
 
+This branch contains code for an approximate sigmoidal transform. We won't bother with this in the paper, but this branch preserves the code for the future.
+
 Setting up
 ----------
 
