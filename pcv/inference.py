@@ -145,6 +145,24 @@ def estimate_elpd(ext_state: Union[ExtendedState, ExtendedState]):
     return float(elpd)
 
 
+def estimate_elpd_diff(ext_state: ExtendedState, model_A_folds: jax.Array, model_B_folds: jax.Array):
+    """Estimate the expected log pointwise predictive density from welford state.
+
+    The resulting elpd is in sum scale, that is we average over (half)
+    chains and sum over folds.
+    """
+    # AVERAGE over chains (chain dim is axis 1, chain half dim is axis 2)
+    nc = ext_state.log_pred_mean.shape[1]
+    fmeans = logsumexp(ext_state.log_pred_mean, axis=(1,)) - jnp.log(nc)
+    fmeans = fmeans.squeeze()
+    # SUM over folds
+    fold_indexes = jnp.arange(fmeans.shape[0])
+    model_A = float(((fold_indexes == model_A_folds) * fmeans).sum())
+    model_B = float(((fold_indexes == model_B_folds) * fmeans).sum())
+    elpd_diff = model_A - model_B
+    return elpd_diff, model_A, model_B
+
+
 def mv_ess_folds(extended_state: ExtendedState):
     """Multivariate ESS for parameters
     """
@@ -499,7 +517,7 @@ def fold_batched_inference_loop(
 
 
 def run_cv(
-    prng_key: jax.Array,
+    prng_key: jax.random.KeyArray,
     logjoint_density: Callable,
     log_p: Callable,
     make_initial_pos: Callable,
@@ -571,10 +589,6 @@ def run_cv(
         rhatss.append(rhats)
         elpd = estimate_elpd(states)
         elpdss.append(elpd)
-        # print(f'Batch {i:d} ({(i+1)*batch_size}x{num_chains} draws/fold).')
-        # print(f'    elpdhat: {elpd}')
-        # print(f'    ESSs:    {ess}')
-        # print(f'    Rhats:   {rhats}')
         drawss.append((i+1)*batch_size*num_chains)
         # TODO: stopping condish
     else:
@@ -583,7 +597,89 @@ def run_cv(
     return {'ess': ess, 'rhat': rhats, 'elpd': elpds, 'draws': draws}
 
 
-def base_rhat(means: jax.Array, vars: jax.Array, n: int) -> float:
+def run_cv_sel(
+    prng_key: jax.random.KeyArray,
+    logjoint_density: Callable,
+    log_p: Callable,
+    model_A_folds: jax.Array,
+    model_B_folds: jax.Array,
+    make_initial_pos: Callable,
+    num_chains: int,
+    batch_size: int,
+    warmup_iter: int,
+    max_batches: int
+):
+    """Compute posterior for a single fold using parallel chains.
+
+    Scope: one chain, one fold.
+
+    This function is the building block for parallel CV.
+
+    Args:
+        prng_key: jax.random.PRNGKey, random number generator state
+        logjoint_density: callable, log joint density function, signature (theta, fold_id)
+        log_p: callable, log density, signature (theta, fold_id)
+        make_initial_pos: callable, function to make initial position for each chain
+        num_chains: int, number of chains to run
+        warmup_iter: int, number of warmup iterations to run
+        online: bool (default True) if true, don't retain the MCMC trace
+
+    Returns:
+        2-tuple of:
+            ExtendedState, final state of the inference loop    
+    """
+    def fold_warmup(fold_id):
+        # curry logjoint_density to fix fold_id
+        def logjoint_density_fold(theta):
+            return logjoint_density(theta, fold_id)
+        def log_p_fold(theta):
+            return log_p(theta, fold_id)
+        states, kernel_params = init_batch_inference_state(
+            rng_key=prng_key,
+            num_chains=num_chains,
+            make_initial_pos=make_initial_pos,
+            logjoint_density=logjoint_density_fold,
+            log_p=log_p_fold,
+            batch_size=batch_size,
+            warmup_iter=warmup_iter)
+        return states, kernel_params
+    def run_batch(fold_id, fold_kernel_params, fold_state):
+        # curry fold_id
+        def logjoint_density_fold(theta):
+            return logjoint_density(theta, fold_id)
+        def log_p_fold(theta):
+            return log_p(theta, fold_id)
+        results = fold_batched_inference_loop(
+            kernel_parameters=fold_kernel_params,
+            batch_size=batch_size,
+            ext_states=fold_state,
+            logjoint_density=logjoint_density_fold,
+            log_pred=log_p_fold,
+        )
+        return results
+    # parallel warmup for each fold, initialize mcmc state
+    fold_ids = jnp.append(model_A_folds, model_B_folds)
+    states, kernel_params = jax.vmap(fold_warmup, in_axes=(0,))(fold_ids)
+    # use python flow control for now but jax can actually do this too
+    # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
+    esss, rhatss, elpdss, drawss = [], [], [], []
+    for i in range(max_batches):
+        states = jax.vmap(run_batch)(fold_ids, kernel_params, states)
+        ess = pred_ess_folds(states)
+        esss.append(ess)
+        rhats, folded_rhats = rhat(states.pred_ws)
+        rhatss.append(rhats)
+        elpd = estimate_elpd(states)
+        elpdss.append(elpd)
+        drawss.append((i+1)*batch_size*num_chains)
+        # TODO: stopping condish
+    else:
+        print(f'Warning: max batches ({max_batches}) reached')
+    ess, rhats, elpds, draws = jnp.stack(esss), jnp.stack(rhatss), jnp.stack(elpdss), jnp.stack(drawss)
+    return {'ess': ess, 'rhat': rhats, 'elpd': elpds, 'draws': draws}
+
+
+def base_rhat(means: jax.Array, vars: jax.Array, n: jax.Array) -> jax.Array:
     """Compute a single Rhat from summary statistics.
 
     Args:
@@ -598,7 +694,7 @@ def base_rhat(means: jax.Array, vars: jax.Array, n: int) -> float:
     return Rhat
 
 
-def rhat_welford(ws: WelfordState) -> float:
+def rhat_welford(ws: WelfordState) -> jax.Array:
     """Compute Rhat from Welford state of chains.
 
     Args:
@@ -613,7 +709,7 @@ def rhat_welford(ws: WelfordState) -> float:
     return base_rhat(means, vars, n)
 
 
-def folded_rhat_welford(ws: WelfordState) -> float:
+def folded_rhat_welford(ws: WelfordState) -> jax.Array:
     """Compute folded Rhat from Welford states.
 
     Args:
@@ -650,6 +746,7 @@ def rhat(welford_tree):
         is_leaf=lambda x: isinstance(x, WelfordState),
     )
     return sr, fsr
+
 
 def rhat_summary(fold_states):
     """Compute Rhat and folded Rhat from welford states of chains.
