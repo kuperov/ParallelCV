@@ -249,8 +249,8 @@ def inference_loop(
         2-Tuple containing TfmExtendedState for two chain halves, and the MCMC
         trace if online if False.
     """
-    log_half_samp = jnp.log(0.5 * num_samples)
-    init_pred = log_pred(theta_center) - log_half_samp # initial guess for predictive density (for numerical stability)
+    log_samp = jnp.log(num_samples)
+    init_pred = log_pred(theta_center) - log_samp # initial guess for predictive density (for numerical stability)
     batch_size = jnp.floor(num_samples ** 0.5).astype(jnp.int32)  # batch size for computing batch mean, variance
     vec_theta_center = jnp.hstack(jax.tree_util.tree_flatten(theta_center)[0])
 
@@ -258,7 +258,7 @@ def inference_loop(
         i_key, carry_key = jax.random.split(ext_state.rng_key)
         chain_state, chain_info = kernel(i_key, ext_state.state)
         elpd_contrib = (
-            log_pred(chain_state.position) - log_half_samp
+            log_pred(chain_state.position) - log_samp
         )  # contrib to mean log predictive
         carry_log_pred_mean = ext_state.log_pred_mean + jnp.log1p(
             jnp.exp(elpd_contrib - ext_state.log_pred_mean)
@@ -302,7 +302,7 @@ def inference_loop(
             divergences=state.divergences,
         )
 
-    initial_state_1h = ExtendedState(
+    init_state = ExtendedState(
         state=initial_state,
         rng_key=rng_key,
         pred_ws=welford_init(init_pred),
@@ -314,7 +314,7 @@ def inference_loop(
         divergences=0,
     )
     state, trace = jax.lax.scan(
-        one_mcmc_step, initial_state_1h, jnp.arange(0, num_samples // 2)
+        one_mcmc_step, init_state, jnp.arange(0, num_samples)
     )
     state = remove_init_pred(state)
     return state, trace
@@ -336,7 +336,6 @@ def fold_posterior(
 
     Args:
         prng_key: jax.random.PRNGKey, random number generator state
-        inference_loop: function to use for inference loop, which may or may not retain draws
         logjoint_density: callable, log joint density function
         log_p: callable, log density for this fold
         make_initial_pos: callable, function to make initial position for each chain
@@ -380,57 +379,260 @@ def fold_posterior(
     return results
 
 
-def split_rhat(means: jax.Array, vars: jax.Array, n: int) -> float:
-    """Compute a single split Rhat from summary statistics of split chains.
+def init_batch_inference_state(
+    rng_key, num_chains, make_initial_pos, logjoint_density, log_p, batch_size, warmup_iter
+) -> Tuple[ExtendedState, Dict]:
+    """Initialize batched inference loop.
+
+    Scope: one fold, many chains.
+
+    Params:
+        rng_key: random key for the inference loop
+        initial_state: initial state for inference
+        batch_size: number of samples to draw per batch
+    
+    Returns:
+        2-Tuple containing ExtendedState for two chain halves, and the MCMC
+        trace if online if False.
+    """
+    init_key, warmup_key, sampling_key = jax.random.split(rng_key, 3)
+    # warmup - GHMC adaption via MEADS
+    init_chain_keys = jax.random.split(init_key, num_chains)
+    init_states = jax.vmap(make_initial_pos)(init_chain_keys)
+    final_warmup_state, parameters = run_meads(
+        logjoint_density_fn=logjoint_density,
+        num_chains=num_chains,
+        prng_key=warmup_key,
+        positions=init_states,
+        num_steps=warmup_iter,
+    )
+    sampling_keys = jax.random.split(sampling_key, num_chains)
+    # central points for estimating folded rhat
+    theta_center = tree_map(lambda x: jnp.median(x, axis=0), final_warmup_state.position)
+    log_samp = jnp.log(batch_size)
+    init_pred = log_p(theta_center) - log_samp # initial guess for predictive density (for numerical stability)
+    vec_theta_center = jnp.hstack(jax.tree_util.tree_flatten(theta_center)[0])
+    # initialize all chains for fold
+    def create_state(chain_init_state, chain_rng_key):
+        return ExtendedState(
+            state=chain_init_state,
+            rng_key=chain_rng_key,
+            pred_ws=welford_init(init_pred),
+            pred_bws=batch_welford_init(init_pred, batch_size),
+            log_pred_mean=init_pred,
+            param_ws=tree_map(welford_init, theta_center),
+            param_bws=batch_vector_welford_init(vec_theta_center, batch_size),
+            param_vws=vector_welford_init(vec_theta_center),
+            divergences=jnp.array(0),
+        )
+    states = jax.vmap(create_state, in_axes=(0, 0))(final_warmup_state, sampling_keys)
+    return states, parameters
+
+
+def fold_batched_inference_loop(
+    kernel_parameters, logjoint_density, ext_states, batch_size, log_pred
+) -> ExtendedState:
+    """Batched online inference loop.
+    
+    Scope: one fold, many chains.
+
+    This one is always online, and performs a single batch at a time.
+    It requires a fully initialized ExtendedState, made by init_inference_loop().
+
+    Params:
+        kernel_parameters: kernel parameters to use for inference
+        ext_states: starting state for inference, all chains
+        batch_size: number of samples to draw
+        log_pred: log predictive density function
+    
+    Returns:
+        ExtendedState for all chains
+    """
+    log_samp = jnp.log(0.5 * batch_size)
+
+    # construct GHMC kernel by incorporating warmup parameters
+    step_fn = ghmc.kernel()
+    def kernel(rng_key, state):
+        return step_fn(
+            rng_key,
+            state,
+            logjoint_density,
+            **kernel_parameters,
+        )
+
+    def one_chain_inference_loop(state):
+        """Single chain inference loop."""
+        def one_mcmc_step(ext_state: ExtendedState, _idx):
+            """Single chain, single MCMC step."""
+            iter_key, carry_key = jax.random.split(ext_state.rng_key)
+            chain_state, chain_info = kernel(iter_key, ext_state.state)
+            elpd_contrib = (
+                log_pred(chain_state.position) - log_samp
+            )  # contrib to mean log predictive
+            carry_log_pred_mean = ext_state.log_pred_mean + jnp.log1p(
+                jnp.exp(elpd_contrib - ext_state.log_pred_mean)
+            )
+            div_count = ext_state.divergences + 1.0 * chain_info.is_divergent
+            carry_pred_ws = welford_add(elpd_contrib, ext_state.pred_ws)
+            carry_pred_bws = batch_welford_add(elpd_contrib, ext_state.pred_bws)
+            carry_param_ws = tree_map(welford_add, chain_state.position, ext_state.param_ws)
+            vec_pos = jnp.hstack(jax.tree_util.tree_flatten(chain_state.position)[0])
+            param_bws = batch_vector_welford_add(vec_pos, ext_state.param_bws)
+            param_vws = vector_welford_add(vec_pos, ext_state.param_vws)
+            carry_state = ExtendedState(
+                state=chain_state,
+                rng_key=carry_key,
+                pred_ws=carry_pred_ws,
+                pred_bws=carry_pred_bws,
+                log_pred_mean=carry_log_pred_mean,
+                param_ws=carry_param_ws,
+                param_bws=param_bws,
+                param_vws=param_vws,
+                divergences=div_count,
+            )
+            return carry_state, None  # don't retain chain trace
+        next_state, _ = jax.lax.scan(one_mcmc_step, state, jnp.arange(0, batch_size))
+        return next_state
+    # run all chains for this fold in parallel
+    next_state = jax.vmap(one_chain_inference_loop, in_axes=(0,))(ext_states)
+    return next_state
+
+
+def run_cv(
+    prng_key: jax.Array,
+    logjoint_density: Callable,
+    log_p: Callable,
+    make_initial_pos: Callable,
+    num_folds: int,
+    num_chains: int,
+    batch_size: int,
+    warmup_iter: int,
+    max_batches: int
+):
+    """Compute posterior for a single fold using parallel chains.
+
+    Scope: one chain, one fold.
+
+    This function is the building block for parallel CV.
 
     Args:
-        means: means of split chains
-        vars:  variances of split chains
-        n:     number of draws per split chain (ie half draws in an original chain)
+        prng_key: jax.random.PRNGKey, random number generator state
+        logjoint_density: callable, log joint density function, signature (theta, fold_id)
+        log_p: callable, log density, signature (theta, fold_id)
+        make_initial_pos: callable, function to make initial position for each chain
+        num_chains: int, number of chains to run
+        warmup_iter: int, number of warmup iterations to run
+        online: bool (default True) if true, don't retain the MCMC trace
+
+    Returns:
+        2-tuple of:
+            ExtendedState, final state of the inference loop    
+    """
+    def fold_warmup(fold_id):
+        # curry logjoint_density to fix fold_id
+        def logjoint_density_fold(theta):
+            return logjoint_density(theta, fold_id)
+        def log_p_fold(theta):
+            return log_p(theta, fold_id)
+        states, kernel_params = init_batch_inference_state(
+            rng_key=prng_key,
+            num_chains=num_chains,
+            make_initial_pos=make_initial_pos,
+            logjoint_density=logjoint_density_fold,
+            log_p=log_p_fold,
+            batch_size=batch_size,
+            warmup_iter=warmup_iter)
+        return states, kernel_params
+    def run_batch(fold_id, fold_kernel_params, fold_state):
+        # curry fold_id
+        def logjoint_density_fold(theta):
+            return logjoint_density(theta, fold_id)
+        def log_p_fold(theta):
+            return log_p(theta, fold_id)
+        results = fold_batched_inference_loop(
+            kernel_parameters=fold_kernel_params,
+            batch_size=batch_size,
+            ext_states=fold_state,
+            logjoint_density=logjoint_density_fold,
+            log_pred=log_p_fold,
+        )
+        return results
+    # parallel warmup for each fold, initialize mcmc state
+    fold_ids = jnp.arange(num_folds)
+    states, kernel_params = jax.vmap(fold_warmup, in_axes=(0,))(fold_ids)
+    # use python flow control for now but jax can actually do this too
+    # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
+    esss, rhatss, elpdss, drawss = [], [], [], []
+    for i in range(max_batches):
+        states = jax.vmap(run_batch)(fold_ids, kernel_params, states)
+        ess = pred_ess_folds(states)
+        esss.append(ess)
+        rhats, folded_rhats = rhat(states.pred_ws)
+        rhatss.append(rhats)
+        elpd = estimate_elpd(states)
+        elpdss.append(elpd)
+        # print(f'Batch {i:d} ({(i+1)*batch_size}x{num_chains} draws/fold).')
+        # print(f'    elpdhat: {elpd}')
+        # print(f'    ESSs:    {ess}')
+        # print(f'    Rhats:   {rhats}')
+        drawss.append((i+1)*batch_size*num_chains)
+        # TODO: stopping condish
+    else:
+        print(f'Warning: max batches ({max_batches}) reached')
+    ess, rhats, elpds, draws = jnp.stack(esss), jnp.stack(rhatss), jnp.stack(elpdss), jnp.stack(drawss)
+    return {'ess': ess, 'rhat': rhats, 'elpd': elpds, 'draws': draws}
+
+
+def base_rhat(means: jax.Array, vars: jax.Array, n: int) -> float:
+    """Compute a single Rhat from summary statistics.
+
+    Args:
+        means: means of chains
+        vars:  variances of chains
+        n:     number of draws per chain
     """
     W = jnp.mean(vars, axis=1)
-    # m = means.shape[1]  # number of split chains
     B = n * jnp.var(means, ddof=1, axis=1)
     varplus = (n - 1) / n * W + B / n
     Rhat = jnp.sqrt(varplus / W)
     return Rhat
 
 
-def split_rhat_welford(ws: WelfordState) -> float:
-    """Compute split Rhat from Welford state of split chains.
+def rhat_welford(ws: WelfordState) -> float:
+    """Compute Rhat from Welford state of chains.
 
     Args:
-        ws: Welford state of split chains
+        ws: Welford state
 
     Returns:
-        split Rhat: array of split Rhats
+        array of Rhats
     """
     means = jax.vmap(welford_mean)(ws)
     vars = jax.vmap(welford_var)(ws)
     n = ws.n[:, 0, ...]  # we aggregate over chain dim, axis=1
-    return split_rhat(means, vars, n)
+    return base_rhat(means, vars, n)
 
 
-def folded_split_rhat_welford(ws: WelfordState) -> float:
-    """Compute folded split Rhat from Welford state of split chains.
+def folded_rhat_welford(ws: WelfordState) -> float:
+    """Compute folded Rhat from Welford states.
 
     Args:
-        ws: Welford state of split chains
+        ws: Welford state
 
     Returns:
-        folded split Rhat: array of folded split Rhats
+        folded Rhat: array of folded Rhats
     """
     mads = jax.vmap(welford_mad)(ws)
     vars = jax.vmap(welford_var)(ws)
     n = ws.n[:, 0, ...]
-    return split_rhat(mads, vars, n)
+    return base_rhat(mads, vars, n)
 
 
 def rhat(welford_tree):
-    """Compute split Rhat and folded split Rhat from welford states of split chains.
+    """Compute Rhat and folded Rhat from welford states.
 
     This version assumes there are multiple posteriors, so that the states have dimension
-    (cv_fold #, chain #, half #, ...).
+    (cv_fold #, chain #, ...).
 
     Args:
         welford_tree: pytree of Welford states for split chains
@@ -440,24 +642,23 @@ def rhat(welford_tree):
         folded split Rhat: pytree of folded split Rhats
     """
     sr = tree_map(
-        split_rhat_welford, welford_tree, is_leaf=lambda x: isinstance(x, WelfordState)
+        rhat_welford, welford_tree, is_leaf=lambda x: isinstance(x, WelfordState)
     )
     fsr = tree_map(
-        folded_split_rhat_welford,
+        folded_rhat_welford,
         welford_tree,
         is_leaf=lambda x: isinstance(x, WelfordState),
     )
     return sr, fsr
 
-
 def rhat_summary(fold_states):
-    """Compute split Rhat and folded split Rhat from welford states of split chains.
+    """Compute Rhat and folded Rhat from welford states of chains.
 
     This version assumes there are multiple posteriors, so that the states have dimension
-    (cv_fold #, chain #, half #, ...).
+    (cv_fold #, chain #, ...).
 
     Args:
-        fold_states: pytree of Welford states for split chains
+        fold_states: pytree of Welford states
 
     Returns:
         pandas data frame summarizing rhats
