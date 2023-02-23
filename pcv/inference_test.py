@@ -7,7 +7,7 @@ import chex
 import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
-from pcv.inference import fold_posterior, online_inference_loop, offline_inference_loop, estimate_elpd, rhat_summary
+from pcv.inference import fold_posterior, inference_loop, offline_inference_loop, estimate_elpd, rhat_summary
 import arviz as az
 import matplotlib.pyplot as plt
 
@@ -19,6 +19,7 @@ tfpk = tfp.math.psd_kernels
 # use exp to transform sigsq to unconstrained space
 sigsq_t = tfb.Exp()
 
+p = 4
 beta_prior = tfd.MultivariateNormalDiag(loc=jnp.zeros(p), scale_diag=jnp.ones(p))
 sigsq_prior = tfd.Gamma(concentration=1.0, rate=1.0)
 
@@ -28,7 +29,7 @@ class Theta(NamedTuple):
     sigsq: chex.Array
 
 
-def _init_model(data_key, N = 100, p = 4):
+def _init_model(data_key, N = 100, p = p):
     y_key, X_key = jax.random.split(data_key)
     beta0 = jnp.arange(p)
     sigsq0 = jnp.array(2.0)
@@ -87,7 +88,7 @@ class TestInference(unittest.TestCase):
         def make_fold(fold_id):
             results = fold_posterior(
                 prng_key=inference_key,
-                inference_loop=online_inference_loop,
+                inference_loop=inference_loop,
                 logjoint_density=lambda theta: logjoint_density(theta, fold_id),
                 log_p=lambda theta: log_pred(theta, fold_id),
                 make_initial_pos=make_initial_pos,

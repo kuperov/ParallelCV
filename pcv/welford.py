@@ -45,7 +45,7 @@ def welford_var(state: WelfordState, ddof=1):
     return (state.Ex2 - state.Ex**2 / state.n) / (state.n - ddof)
 
 
-def welford_var_combine(state: WelfordState, ddof=1, comb_axis=(1,2), out_axis=0):
+def welford_var_combine(state: WelfordState, ddof=1, comb_axis=(1,), out_axis=0):
     """Univariate variance for data
     
     Axis should be the axis over which the data is combined.
@@ -140,10 +140,11 @@ def vector_welford_cov(state: VectorWelfordState, ddof=1):
     """Covariance matrix for data"""
     return (state.Ex2 - jnp.outer(state.Ex, state.Ex) / state.n) / (state.n - ddof)
 
-def vector_welford_cov_combine(state:VectorWelfordState, ddof=1, comb_axis=(1,2), out_axis=0):
+def vector_welford_cov_combine(state:VectorWelfordState, ddof=1, comb_axis=(1,), out_axis=0):
     """Covariance matrix for data
     
-    Axis should be the axis over which the data is combined.
+    Args:
+        comb_axis: axes over which the data is combined.
     """
     ex2 = state.Ex2.sum(axis=comb_axis)
     ex = state.Ex.sum(axis=comb_axis)

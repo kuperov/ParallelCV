@@ -93,25 +93,14 @@ def run_meads(
 
 
 class ExtendedState(NamedTuple):
-    state: blackjax.mcmc.ghmc.GHMCState  # current HMC state
-    rng_key: jax.Array  # current random seed
-    pred_ws: WelfordState  # accumulator for log predictive
-    log_pred_mean: float  # log of mean predictive
-    param_ws: WelfordState  # accumulator for parameters
-    divergences: jax.Array  # divergence counts (int array)
-
-
-class TfmExtendedState(NamedTuple):
-    """Transformed extended state--also includes accumulators for transformed variables
+    """MCMC state--extends regular GHMC state variable--also includes batch welford accumulators
     """
     state: blackjax.mcmc.ghmc.GHMCState  # current HMC state
     rng_key: jax.Array  # current random seed
     pred_ws: WelfordState  # accumulator for log predictive
     pred_bws: BatchWelfordState  # batch accumulator for log predictive
-    pred_tfm_ws: WelfordState # accumulator for transformed log predictive
     log_pred_mean: float  # log of mean predictive
     param_ws: WelfordState  # accumulator for parameters
-    param_tfm_ws: WelfordState  # accumulator for transformed parameters
     param_vws: VectorWelfordState  # vector accumulator for parameters
     param_bws: BatchVectorWelfordState  # vector batch accumulator for parameters
     divergences: jax.Array  # divergence counts (int array)
@@ -141,41 +130,39 @@ def state_diagnostics(state) -> None:
     print("\n".join(lines))
 
 
-def estimate_elpd(extended_state: Union[ExtendedState, TfmExtendedState]):
+def estimate_elpd(ext_state: Union[ExtendedState, ExtendedState]):
     """Estimate the expected log pointwise predictive density from welford state.
 
     The resulting elpd is in sum scale, that is we average over (half)
     chains and sum over folds.
     """
-    # AVERAGE over (half) chains (chain dim is axis 1, chain half dim is axis 2)
-    nchains, nhalfs = extended_state.log_pred_mean.shape[1:3]
-    fold_means = logsumexp(extended_state.log_pred_mean, axis=(1, 2)) - jnp.log(
-        nchains * nhalfs
-    )
-    fold_means = fold_means.squeeze()
+    # AVERAGE over chains (chain dim is axis 1, chain half dim is axis 2)
+    nc = ext_state.log_pred_mean.shape[1]
+    fmeans = logsumexp(ext_state.log_pred_mean, axis=(1,)) - jnp.log(nc)
+    fmeans = fmeans.squeeze()
     # SUM over folds
-    elpd = jnp.sum(fold_means)
+    elpd = jnp.sum(fmeans)
     return float(elpd)
 
 
-def mv_ess_folds(extended_state: TfmExtendedState):
+def mv_ess_folds(extended_state: ExtendedState):
     """Multivariate ESS for parameters
     """
     Sigmas = vector_welford_cov_combine(extended_state.param_bws.batches)
     Lambdas = vector_welford_cov_combine(extended_state.param_vws)
-    ns = extended_state.param_vws.n.sum(axis=(1,2))
+    ns = extended_state.param_vws.n.sum(axis=(1,))
     nfolds, p = Sigmas.shape[0], Sigmas.shape[1]
     def f(i):
         return ns[i] * (jnp.linalg.det(Sigmas[i]) / jnp.linalg.det(Lambdas[i])) ** (1/p)
     return jax.vmap(f)(jnp.arange(nfolds))
 
 
-def pred_ess_folds(extended_state: TfmExtendedState):
+def pred_ess_folds(extended_state: ExtendedState):
     """Univariate ESS for predictives
     """
-    Sigmas = welford_var_combine(extended_state.pred_bws.batches)
-    Lambdas = welford_var_combine(extended_state.pred_ws)
-    ns = extended_state.pred_ws.n.sum(axis=(1,2))
+    Sigmas = welford_var_combine(extended_state.pred_bws.batches, comb_axis=(1,))
+    Lambdas = welford_var_combine(extended_state.pred_ws, comb_axis=(1,))
+    ns = extended_state.pred_ws.n.sum(axis=(1,))
     return ns * Sigmas / Lambdas
 
 
@@ -236,15 +223,18 @@ def apply_sigmoid_tree(param: PyTree, x: PyTree) -> PyTree:
     return tree_map(apply_sigmoid, param, x, is_leaf=lambda x: isinstance(x, SigmoidParam))
 
 
-# single chain inference loop we will run in parallel using vmap
-def offline_inference_loop(
-    rng_key, kernel, initial_state, num_samples, log_pred, _param_sigp, _pred_sigp, theta_center
+def inference_loop(
+    rng_key, kernel, initial_state, num_samples, log_pred, theta_center, online=True
 ) -> ExtendedState:
-    """Offline version of inference loop.
-    
-    Because this is offline, we'll need to use the ExtendedState to keep track of the
-    transformed version of the parameter/predictive accumulators as well as the regular
-    accumulators.
+    """Optionally online inference loop.
+
+    This inference loop can be either online or offline, governed by the
+    online flag. State is kept in the ExtendedState, which is a wrapper
+    around the Blackjax HMCState object.
+
+    We use regular python control flow to switch between online and offline
+    versions of the inference loop. This is optimized out by JAX, so there
+    is (hopefully) no performance penalty.
 
     Params:
         rng_key: random key for the inference loop
@@ -252,110 +242,19 @@ def offline_inference_loop(
         initial_state: initial state for inference
         num_samples: number of samples to draw
         log_pred: log predictive density function
-        _param_sigp: not used
-        _pred_sigp: not used
         theta_center: center of the parameter distribution (used for initialization)
+        online: (default True) if true, don't retain the MCMC trace
     
     Returns:
-        TfmExtendedState for two chain halves
-    """
-    log_half_samp = jnp.log(0.5 * num_samples)
-    init_pred = log_pred(theta_center) - log_half_samp # initial guess for predictive density (for numerical stability)
-
-    def one_mcmc_step(ext_state, _idx):
-        i_key, carry_key = jax.random.split(ext_state.rng_key)
-        chain_state, chain_info = kernel(i_key, ext_state.state)
-        elpd_contrib = (
-            log_pred(chain_state.position) - log_half_samp
-        )  # contrib to mean log predictive
-        carry_log_pred_mean = ext_state.log_pred_mean + jnp.log1p(
-            jnp.exp(elpd_contrib - ext_state.log_pred_mean)
-        )
-        div_count = ext_state.divergences + 1.0 * chain_info.is_divergent
-        carry_pred_ws = welford_add(elpd_contrib, ext_state.pred_ws)
-        carry_param_ws = tree_map(welford_add, chain_state.position, ext_state.param_ws)
-        carry_state = ExtendedState(
-            state=chain_state,
-            rng_key=carry_key,
-            pred_ws=carry_pred_ws,
-            log_pred_mean=carry_log_pred_mean,
-            param_ws=carry_param_ws,
-            divergences=div_count,
-        )
-        return carry_state, chain_state
-
-    def remove_init_pred(state):
-        # remove initial guess for predictive density
-        return ExtendedState(
-            state=state.state,
-            rng_key=state.rng_key,
-            pred_ws=state.pred_ws,
-            log_pred_mean=state.log_pred_mean + jnp.log1p(
-                -jnp.exp(init_pred - state.log_pred_mean)
-            ),
-            param_ws=state.param_ws,
-            divergences=state.divergences,
-        )
-
-    # first half of chain
-    initial_state_1h = ExtendedState(
-        initial_state,
-        rng_key,
-        pred_ws=welford_init(log_pred(theta_center)),
-        log_pred_mean=init_pred,
-        param_ws=tree_map(welford_init, theta_center),
-        divergences=0,
-    )
-    carry_state_1h, states_1h = jax.lax.scan(
-        one_mcmc_step, initial_state_1h, jnp.arange(0, num_samples // 2)
-    )
-    carry_state_1h = remove_init_pred(carry_state_1h)
-    # second half of chain - continue at same point but accumulate into new welford states
-    initial_state_2h = ExtendedState(
-        carry_state_1h.state,
-        carry_state_1h.rng_key,
-        pred_ws=welford_init(log_pred(theta_center)),
-        log_pred_mean=init_pred,
-        param_ws=tree_map(welford_init, theta_center),
-        divergences=0,
-    )
-    carry_state_2h, states_2h = jax.lax.scan(
-        one_mcmc_step, initial_state_2h, jnp.arange(num_samples // 2, num_samples)
-    )
-    carry_state_2h = remove_init_pred(carry_state_2h)
-    final_state = tree_stack((carry_state_1h, carry_state_2h,))
-    trace = tree_concat((states_1h, states_2h,))
-    return final_state, trace
-
-
-def online_inference_loop(
-    rng_key, kernel, initial_state, num_samples, log_pred, param_sigp, pred_sigp, theta_center
-) -> TfmExtendedState:
-    """Online version of inference loop.
-    
-    Because this is online, we'll need to use the TfmExtendedState to keep track of the
-    transformed version of the parameter/predictive accumulators as well as the regular
-    accumulators.
-
-    Params:
-        rng_key: random key for the inference loop
-        kernel: kernel to use for inference
-        initial_state: initial state for inference
-        num_samples: number of samples to draw
-        log_pred: log predictive density function
-        param_sigp: PyTree of transformation parameters of same structure as Theta
-        pred_sigp: transformation parameters for predictive density
-        theta_center: center of the parameter distribution (used for initialization)
-    
-    Returns:
-        TfmExtendedState for two chain halves
+        2-Tuple containing TfmExtendedState for two chain halves, and the MCMC
+        trace if online if False.
     """
     log_half_samp = jnp.log(0.5 * num_samples)
     init_pred = log_pred(theta_center) - log_half_samp # initial guess for predictive density (for numerical stability)
     batch_size = jnp.floor(num_samples ** 0.5).astype(jnp.int32)  # batch size for computing batch mean, variance
     vec_theta_center = jnp.hstack(jax.tree_util.tree_flatten(theta_center)[0])
 
-    def one_mcmc_step(ext_state: TfmExtendedState, _idx):
+    def one_mcmc_step(ext_state: ExtendedState, _idx):
         i_key, carry_key = jax.random.split(ext_state.rng_key)
         chain_state, chain_info = kernel(i_key, ext_state.state)
         elpd_contrib = (
@@ -367,37 +266,33 @@ def online_inference_loop(
         div_count = ext_state.divergences + 1.0 * chain_info.is_divergent
         carry_pred_ws = welford_add(elpd_contrib, ext_state.pred_ws)
         carry_pred_bws = batch_welford_add(elpd_contrib, ext_state.pred_bws)
-        carry_pred_tfm_ws = welford_add(apply_sigmoid(pred_sigp, elpd_contrib), ext_state.pred_tfm_ws)
         carry_param_ws = tree_map(welford_add, chain_state.position, ext_state.param_ws)
-        tfm_pos = apply_sigmoid_tree(param_sigp, chain_state.position)
-        carry_param_tfm_ws = tree_map(welford_add, tfm_pos, ext_state.param_tfm_ws)
         vec_pos = jnp.hstack(jax.tree_util.tree_flatten(chain_state.position)[0])
         param_bws = batch_vector_welford_add(vec_pos, ext_state.param_bws)
         param_vws = vector_welford_add(vec_pos, ext_state.param_vws)
-        carry_state = TfmExtendedState(
+        carry_state = ExtendedState(
             state=chain_state,
             rng_key=carry_key,
             pred_ws=carry_pred_ws,
-            pred_tfm_ws=carry_pred_tfm_ws,
             pred_bws=carry_pred_bws,
-            param_tfm_ws=carry_param_tfm_ws,
             log_pred_mean=carry_log_pred_mean,
             param_ws=carry_param_ws,
             param_bws=param_bws,
             param_vws=param_vws,
             divergences=div_count,
         )
-        return carry_state, None  # don't retain chain trace
+        if online:
+            return carry_state, None  # don't retain chain trace
+        else:
+            return carry_state, chain_state
 
     def remove_init_pred(state):
         # remove initial guess for predictive density
-        return TfmExtendedState(
+        return ExtendedState(
             state=state.state,
             rng_key=state.rng_key,
             pred_ws=state.pred_ws,
-            pred_tfm_ws=state.pred_tfm_ws,
             pred_bws=state.pred_bws,
-            param_tfm_ws=state.param_tfm_ws,
             log_pred_mean=state.log_pred_mean + jnp.log1p(
                 -jnp.exp(init_pred - state.log_pred_mean)
             ),
@@ -407,108 +302,33 @@ def online_inference_loop(
             divergences=state.divergences,
         )
 
-    # first half of chain
-    initial_state_1h = TfmExtendedState(
-        initial_state,
-        rng_key,
+    initial_state_1h = ExtendedState(
+        state=initial_state,
+        rng_key=rng_key,
         pred_ws=welford_init(init_pred),
         pred_bws=batch_welford_init(init_pred, batch_size),
-        pred_tfm_ws=welford_init(0.),
         log_pred_mean=init_pred,
         param_ws=tree_map(welford_init, theta_center),
-        param_tfm_ws=tree_map(welford_init, tree_map(jnp.zeros_like, theta_center)),
         param_bws=batch_vector_welford_init(vec_theta_center, batch_size),
         param_vws=vector_welford_init(vec_theta_center),
         divergences=0,
     )
-    carry_state_1h, _ = jax.lax.scan(
+    state, trace = jax.lax.scan(
         one_mcmc_step, initial_state_1h, jnp.arange(0, num_samples // 2)
     )
-    carry_state_1h = remove_init_pred(carry_state_1h)
-    # second half of chain - continue at same point but feed new accumulator
-    initial_state_2h = TfmExtendedState(
-        state=carry_state_1h.state,
-        rng_key=carry_state_1h.rng_key,
-        pred_ws=welford_init(init_pred),
-        pred_bws=batch_welford_init(init_pred, batch_size),
-        pred_tfm_ws=welford_init(0.),
-        log_pred_mean=init_pred,
-        param_ws=tree_map(welford_init, theta_center),
-        param_tfm_ws=tree_map(welford_init, tree_map(jnp.zeros_like, theta_center)),
-        param_bws=batch_vector_welford_init(vec_theta_center, batch_size),
-        param_vws=vector_welford_init(vec_theta_center),
-        divergences=0,
-    )
-    carry_state_2h, _ = jax.lax.scan(
-        one_mcmc_step, initial_state_2h, jnp.arange(num_samples // 2, num_samples)
-    )
-    carry_state_2h = remove_init_pred(carry_state_2h)
-    return tree_stack((carry_state_1h, carry_state_2h,))
-
-
-def transform_inference_loop(
-    rng_key, kernel, initial_state, num_samples, log_pred, theta_center
-):
-    """Inference loop for estimating transformation parameters
-
-    This loop is similar to the online inference loop, but does not split chains
-    and returns only the information required to estimate transformation parameters.
-
-    Params:
-        rng_key: random number generator key
-        kernel: MCMC kernel
-        initial_state: initial state of the chain
-        num_samples: number of samples to draw
-        log_pred: log predictive density function
-        theta_center: rough guess at center of the distribution
-    """
-    log_half_samp = jnp.log(0.5 * num_samples + 1)  # +1 for initialization
-
-    def one_mcmc_step(ext_state, _idx):
-        i_key, carry_key = jax.random.split(ext_state.rng_key)
-        chain_state, chain_info = kernel(i_key, ext_state.state)
-        elpd_contrib = (
-            log_pred(chain_state.position) - log_half_samp
-        )  # contrib to mean log predictive
-        carry_log_pred_mean = ext_state.log_pred_mean + jnp.log1p(
-            jnp.exp(elpd_contrib - ext_state.log_pred_mean)
-        )
-        div_count = ext_state.divergences + 1.0 * chain_info.is_divergent
-        carry_pred_ws = welford_add(elpd_contrib, ext_state.pred_ws)
-        carry_param_ws = tree_map(welford_add, chain_state.position, ext_state.param_ws)
-        carry_state = ExtendedState(
-            state=chain_state,
-            rng_key=carry_key,
-            pred_ws=carry_pred_ws,
-            log_pred_mean=carry_log_pred_mean,
-            param_ws=carry_param_ws,
-            divergences=div_count,
-        )
-        return carry_state, None  # don't retain chain trace
-
-    initial_state = ExtendedState(
-        initial_state,
-        rng_key,
-        pred_ws=welford_init(log_pred(theta_center)),
-        log_pred_mean=log_pred(theta_center) - log_half_samp,
-        param_ws=tree_map(welford_init, theta_center),
-        divergences=0,
-    )
-    carry_state, _ = jax.lax.scan(
-        one_mcmc_step, initial_state, jnp.arange(0, num_samples // 2)
-    )
-    return carry_state
+    state = remove_init_pred(state)
+    return state, trace
 
 
 def fold_posterior(
-    prng_key,
-    inference_loop,
-    logjoint_density,
-    log_p,
-    make_initial_pos,
-    num_chains,
-    num_samples,
-    warmup_iter,
+    prng_key: jax.random.PRNGKey,
+    logjoint_density: Callable,
+    log_p: Callable,
+    make_initial_pos: Callable,
+    num_chains: int,
+    num_samples: int,
+    warmup_iter: int,
+    online: bool
 ):
     """Compute posterior for a single fold using parallel chains.
 
@@ -523,10 +343,12 @@ def fold_posterior(
         num_chains: int, number of chains to run
         num_samples: int, number of samples to draw
         warmup_iter: int, number of warmup iterations to run
+        online: bool (default True) if true, don't retain the MCMC trace
 
     Returns:
-        state: ExtendedState, final state of the inference loop
-        trace: trace of posterior draws if the offline inference loop was used, otherwise None
+        2-tuple of:
+            ExtendedState, final state of the inference loop
+            trace of posterior draws if the offline inference loop was used, otherwise None
     """
     warmup_key, sampling_key, init_key = jax.random.split(prng_key, 3)
     # warmup - GHMC adaption via MEADS
@@ -539,7 +361,6 @@ def fold_posterior(
         positions=init_states,
         num_steps=warmup_iter,
     )
-
     # construct GHMC kernel by incorporating warmup parameters
     step_fn = ghmc.kernel()
     def kernel(rng_key, state):
@@ -549,23 +370,12 @@ def fold_posterior(
             logjoint_density,
             **parameters,
         )
-
     sampling_keys = jax.random.split(sampling_key, num_chains)
-    
     # central points for estimating folded rhat
     centers = tree_map(lambda x: jnp.median(x, axis=0), final_warmup_state.position)
-
-    # now that we have adaption parameters, estimate rough mean and variance of parameters and log predictive
-    # in order to construct the sigmoid transformation
-    tfm_states = jax.vmap(transform_inference_loop, in_axes=(0, None, 0, None, None, None))(
-        sampling_keys, kernel, final_warmup_state, warmup_iter, log_p, centers
-    )
-    param_tfmp: PyTree = tree_map(sigmoid_transform_param, tfm_states.param_ws, is_leaf=lambda x: isinstance(x, WelfordState))
-    pred_tfmp: SigmoidParam = sigmoid_transform_param(tfm_states.pred_ws)
-
     # run chain
-    results = jax.vmap(inference_loop, in_axes=(0, None, 0, None, None, None, None, None))(
-        sampling_keys, kernel, final_warmup_state, num_samples, log_p, param_tfmp, pred_tfmp, centers
+    results = jax.vmap(inference_loop, in_axes=(0, None, 0, None, None, None, None))(
+        sampling_keys, kernel, final_warmup_state, num_samples, log_p, centers, online
     )
     return results
 
@@ -629,16 +439,12 @@ def rhat(welford_tree):
         split Rhat: pytree pytree of split Rhats
         folded split Rhat: pytree of folded split Rhats
     """
-    # collapse axis 1 (chain #) and axis 2 (half #) to a single dimension
-    com_chains = tree_map(
-        lambda x: jnp.reshape(x, (x.shape[0], -1, *x.shape[3:])), welford_tree
-    )
     sr = tree_map(
-        split_rhat_welford, com_chains, is_leaf=lambda x: isinstance(x, WelfordState)
+        split_rhat_welford, welford_tree, is_leaf=lambda x: isinstance(x, WelfordState)
     )
     fsr = tree_map(
         folded_split_rhat_welford,
-        com_chains,
+        welford_tree,
         is_leaf=lambda x: isinstance(x, WelfordState),
     )
     return sr, fsr
@@ -657,18 +463,14 @@ def rhat_summary(fold_states):
         pandas data frame summarizing rhats
     """
     par_rh, par_frh = rhat(fold_states.param_ws)
-    par_rh_tfm, par_frh_tfm = rhat(fold_states.param_tfm_ws)
     pred_rh, pred_frh = rhat(fold_states.pred_ws)
-    pred_rh_tfm, pred_frh_tfm = rhat(fold_states.pred_tfm_ws)
     K = pred_rh.shape[0]
     rows = []
     max_row = None
     for i in range(K):
         for (par, pred, meas) in [
-            (par_rh, pred_rh, "Split Rhat"),
-            (par_rh_tfm, pred_rh_tfm, "Split Rhat (transformed)"),
-            (par_frh, pred_frh, "Folded Split Rhat"),
-            (par_frh_tfm, pred_frh_tfm, "Folded Split Rhat (transformed)"),
+            (par_rh, pred_rh, "Rhat"),
+            (par_frh, pred_frh, "Folded Rhat"),
         ]:
             row = {"fold": f"Fold {i}", "measure": meas}
             for j, parname in enumerate(par._fields):
