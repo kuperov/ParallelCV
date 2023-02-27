@@ -130,11 +130,10 @@ def state_diagnostics(state) -> None:
     print("\n".join(lines))
 
 
-def estimate_elpd(ext_state: Union[ExtendedState, ExtendedState]):
+def estimate_elpd(ext_state: ExtendedState):
     """Estimate the expected log pointwise predictive density from welford state.
 
-    The resulting elpd is in sum scale, that is we average over (half)
-    chains and sum over folds.
+    The resulting elpd is in sum scale, summing over folds.
     """
     # AVERAGE over chains (chain dim is axis 1, chain half dim is axis 2)
     nc = ext_state.log_pred_mean.shape[1]
@@ -143,6 +142,17 @@ def estimate_elpd(ext_state: Union[ExtendedState, ExtendedState]):
     # SUM over folds
     elpd = jnp.sum(fmeans)
     return float(elpd)
+
+
+def estimate_fold_elpds(ext_state: ExtendedState):
+    """Estimate the expected log pointwise predictive density from welford state.
+
+    Result is per fold
+    """
+    # AVERAGE over chains (chain dim is axis 1, chain half dim is axis 2)
+    nc = ext_state.log_pred_mean.shape[1]
+    fmeans = logsumexp(ext_state.log_pred_mean, axis=(1,)) - jnp.log(nc)
+    return fmeans.squeeze()
 
 
 def estimate_elpd_diff(ext_state: ExtendedState, model_A_folds: jax.Array, model_B_folds: jax.Array):
@@ -601,8 +611,7 @@ def run_cv_sel(
     prng_key: jax.random.KeyArray,
     logjoint_density: Callable,
     log_p: Callable,
-    model_A_folds: jax.Array,
-    model_B_folds: jax.Array,
+    num_folds: int,
     make_initial_pos: Callable,
     num_chains: int,
     batch_size: int,
@@ -617,8 +626,9 @@ def run_cv_sel(
 
     Args:
         prng_key: jax.random.PRNGKey, random number generator state
-        logjoint_density: callable, log joint density function, signature (theta, fold_id)
-        log_p: callable, log density, signature (theta, fold_id)
+        logjoint_density: callable, log joint density function, signature (theta, fold_id, model_id)
+        log_p: callable, log density, signature (theta, fold_id, model_id)
+        num_folds: int, number of folds
         make_initial_pos: callable, function to make initial position for each chain
         num_chains: int, number of chains to run
         warmup_iter: int, number of warmup iterations to run
@@ -628,12 +638,12 @@ def run_cv_sel(
         2-tuple of:
             ExtendedState, final state of the inference loop    
     """
-    def fold_warmup(fold_id):
+    def fold_warmup(fold_id, model_id):
         # curry logjoint_density to fix fold_id
         def logjoint_density_fold(theta):
-            return logjoint_density(theta, fold_id)
+            return logjoint_density(theta, fold_id, model_id)
         def log_p_fold(theta):
-            return log_p(theta, fold_id)
+            return log_p(theta, fold_id, model_id)
         states, kernel_params = init_batch_inference_state(
             rng_key=prng_key,
             num_chains=num_chains,
@@ -643,12 +653,12 @@ def run_cv_sel(
             batch_size=batch_size,
             warmup_iter=warmup_iter)
         return states, kernel_params
-    def run_batch(fold_id, fold_kernel_params, fold_state):
+    def run_batch(fold_id, model_id, fold_kernel_params, fold_state):
         # curry fold_id
         def logjoint_density_fold(theta):
-            return logjoint_density(theta, fold_id)
+            return logjoint_density(theta, fold_id, model_id)
         def log_p_fold(theta):
-            return log_p(theta, fold_id)
+            return log_p(theta, fold_id, model_id)
         results = fold_batched_inference_loop(
             kernel_parameters=fold_kernel_params,
             batch_size=batch_size,
@@ -658,25 +668,41 @@ def run_cv_sel(
         )
         return results
     # parallel warmup for each fold, initialize mcmc state
-    fold_ids = jnp.append(model_A_folds, model_B_folds)
-    states, kernel_params = jax.vmap(fold_warmup, in_axes=(0,))(fold_ids)
+    fold_ids = jnp.tile(jnp.arange(num_folds), 2)
+    model_ids = jnp.repeat(jnp.array([0, 1]), num_folds)
+    states, kernel_params = jax.vmap(fold_warmup)(fold_ids, model_ids)
     # use python flow control for now but jax can actually do this too
     # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
-    esss, rhatss, elpdss, drawss = [], [], [], []
+    drawss = []
+    fold_esss, fold_rhatss, fold_elpdss = [], [], []
+    total_esss, total_elpdss, elpd_diffs = [], [], []
+    model_totals = jnp.vstack([jnp.repeat(jnp.array([1., 0.]), num_folds),
+                               jnp.repeat(jnp.array([0., 1.]), num_folds)]).T
+    model_diffs = jnp.repeat(jnp.array([1., -1.]), num_folds)  # A - B
     for i in range(max_batches):
-        states = jax.vmap(run_batch)(fold_ids, kernel_params, states)
+        states = jax.vmap(run_batch)(fold_ids, model_ids, kernel_params, states)
         ess = pred_ess_folds(states)
-        esss.append(ess)
-        rhats, folded_rhats = rhat(states.pred_ws)
-        rhatss.append(rhats)
-        elpd = estimate_elpd(states)
-        elpdss.append(elpd)
+        fold_esss.append(ess)
+        rhats, _ = rhat(states.pred_ws)
+        fold_rhatss.append(rhats)
+        fold_elpds = estimate_fold_elpds(states)
+        fold_elpdss.append(fold_elpds)
         drawss.append((i+1)*batch_size*num_chains)
-        # TODO: stopping condish
+        total_elpdss.append(fold_elpds @ model_totals)
+        total_esss.append(ess @ model_totals)
+        elpd_diffs.append(fold_elpds @ model_diffs)
+        # TODO: apply stopping condition using a callback (this means we can test several of them offline)
     else:
         print(f'Warning: max batches ({max_batches}) reached')
-    ess, rhats, elpds, draws = jnp.stack(esss), jnp.stack(rhatss), jnp.stack(elpdss), jnp.stack(drawss)
-    return {'ess': ess, 'rhat': rhats, 'elpd': elpds, 'draws': draws}
+    ess, rhats, elpds, draws = jnp.stack(fold_esss), jnp.stack(fold_rhatss), jnp.stack(fold_elpdss), jnp.stack(drawss)
+    return {
+        'ess': ess,
+        'rhat': rhats,
+        'elpd': elpds,
+        'draws': draws,
+        'total_ess': total_esss,
+        'total_elpd': total_elpdss,
+        'elpd_diff': elpd_diffs}
 
 
 def base_rhat(means: jax.Array, vars: jax.Array, n: jax.Array) -> jax.Array:
