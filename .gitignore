@@ -8,3 +8,5 @@ build
 notebooks/Untitled*ipynb
 diag/models/*_data*
 pcv.egg-info/
+**/*Rda
+.Rhistory

@@ -6,7 +6,8 @@ import jax
 import jax.numpy as jnp
 import pandas as pd
 from blackjax.kernels import ghmc
-from blackjax.types import PRNGKey, PyTree
+from blackjax.types import PyTree
+from blackjax.mcmc.ghmc import GHMCState
 from jax import lax
 from jax import numpy as jnp
 from jax.scipy import stats
@@ -19,10 +20,10 @@ from .welford import *
 def run_meads(
     logjoint_density_fn: Callable,
     num_chains: int,
-    prng_key: PRNGKey,
+    prng_key: jax.random.KeyArray,
     positions: PyTree,
     num_steps: int = 1000,
-) -> Tuple[PyTree, Dict]:
+) -> Tuple[GHMCState, Dict]:
     """Adapt the parameters of the Generalized HMC algorithm.
 
     See docco at https://github.com/blackjax-devs/blackjax/blob/bab42d809b48492f2cbc06471497cefbbf8a90f8/blackjax/kernels.py#L750
@@ -95,11 +96,11 @@ def run_meads(
 class ExtendedState(NamedTuple):
     """MCMC state--extends regular GHMC state variable--also includes batch welford accumulators
     """
-    state: blackjax.mcmc.ghmc.GHMCState  # current HMC state
-    rng_key: jax.Array  # current random seed
+    state: GHMCState  # current HMC state
+    rng_key: jax.random.KeyArray  # current random seed
     pred_ws: WelfordState  # accumulator for log predictive
     pred_bws: BatchWelfordState  # batch accumulator for log predictive
-    log_pred_mean: float  # log of mean predictive
+    log_pred_mean: jax.Array  # log of mean predictive
     param_ws: WelfordState  # accumulator for parameters
     param_vws: VectorWelfordState  # vector accumulator for parameters
     param_bws: BatchVectorWelfordState  # vector batch accumulator for parameters
@@ -142,17 +143,6 @@ def estimate_elpd(ext_state: ExtendedState):
     # SUM over folds
     elpd = jnp.sum(fmeans)
     return float(elpd)
-
-
-def estimate_fold_elpds(ext_state: ExtendedState):
-    """Estimate the expected log pointwise predictive density from welford state.
-
-    Result is per fold
-    """
-    # AVERAGE over chains (chain dim is axis 1, chain half dim is axis 2)
-    nc = ext_state.log_pred_mean.shape[1]
-    fmeans = logsumexp(ext_state.log_pred_mean, axis=(1,)) - jnp.log(nc)
-    return fmeans.squeeze()
 
 
 def estimate_elpd_diff(ext_state: ExtendedState, model_A_folds: jax.Array, model_B_folds: jax.Array):
@@ -253,7 +243,7 @@ def apply_sigmoid_tree(param: PyTree, x: PyTree) -> PyTree:
 
 def inference_loop(
     rng_key, kernel, initial_state, num_samples, log_pred, theta_center, online=True
-) -> ExtendedState:
+) -> Tuple[ExtendedState, ExtendedState]:
     """Optionally online inference loop.
 
     This inference loop can be either online or offline, governed by the
@@ -274,7 +264,7 @@ def inference_loop(
         online: (default True) if true, don't retain the MCMC trace
     
     Returns:
-        2-Tuple containing TfmExtendedState for two chain halves, and the MCMC
+        2-Tuple containing ExtendedState for two chain halves, and the MCMC
         trace if online if False.
     """
     log_samp = jnp.log(num_samples)
@@ -349,7 +339,7 @@ def inference_loop(
 
 
 def fold_posterior(
-    prng_key: jax.random.PRNGKey,
+    prng_key: jax.random.KeyArray,
     logjoint_density: Callable,
     log_p: Callable,
     make_initial_pos: Callable,
@@ -437,8 +427,7 @@ def init_batch_inference_state(
     sampling_keys = jax.random.split(sampling_key, num_chains)
     # central points for estimating folded rhat
     theta_center = tree_map(lambda x: jnp.median(x, axis=0), final_warmup_state.position)
-    log_samp = jnp.log(batch_size)
-    init_pred = log_p(theta_center) - log_samp # initial guess for predictive density (for numerical stability)
+    init_pred = log_p(theta_center) # initial guess for predictive density (for numerical stability)
     vec_theta_center = jnp.hstack(jax.tree_util.tree_flatten(theta_center)[0])
     # initialize all chains for fold
     def create_state(chain_init_state, chain_rng_key):
@@ -453,7 +442,7 @@ def init_batch_inference_state(
             param_vws=vector_welford_init(vec_theta_center),
             divergences=jnp.array(0),
         )
-    states = jax.vmap(create_state, in_axes=(0, 0))(final_warmup_state, sampling_keys)
+    states = jax.vmap(create_state, in_axes=(0, 0,))(final_warmup_state, sampling_keys)
     return states, parameters
 
 
@@ -476,8 +465,6 @@ def fold_batched_inference_loop(
     Returns:
         ExtendedState for all chains
     """
-    log_samp = jnp.log(0.5 * batch_size)
-
     # construct GHMC kernel by incorporating warmup parameters
     step_fn = ghmc.kernel()
     def kernel(rng_key, state):
@@ -494,9 +481,7 @@ def fold_batched_inference_loop(
             """Single chain, single MCMC step."""
             iter_key, carry_key = jax.random.split(ext_state.rng_key)
             chain_state, chain_info = kernel(iter_key, ext_state.state)
-            elpd_contrib = (
-                log_pred(chain_state.position) - log_samp
-            )  # contrib to mean log predictive
+            elpd_contrib = log_pred(chain_state.position) # contrib to mean log predictive
             carry_log_pred_mean = ext_state.log_pred_mean + jnp.log1p(
                 jnp.exp(elpd_contrib - ext_state.log_pred_mean)
             )
@@ -639,32 +624,22 @@ def run_cv_sel(
             ExtendedState, final state of the inference loop    
     """
     def fold_warmup(fold_id, model_id):
-        # curry logjoint_density to fix fold_id
-        def logjoint_density_fold(theta):
-            return logjoint_density(theta, fold_id, model_id)
-        def log_p_fold(theta):
-            return log_p(theta, fold_id, model_id)
         states, kernel_params = init_batch_inference_state(
             rng_key=prng_key,
             num_chains=num_chains,
             make_initial_pos=make_initial_pos,
-            logjoint_density=logjoint_density_fold,
-            log_p=log_p_fold,
+            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id),
+            log_p=lambda theta: log_p(theta, fold_id, model_id),
             batch_size=batch_size,
             warmup_iter=warmup_iter)
         return states, kernel_params
     def run_batch(fold_id, model_id, fold_kernel_params, fold_state):
-        # curry fold_id
-        def logjoint_density_fold(theta):
-            return logjoint_density(theta, fold_id, model_id)
-        def log_p_fold(theta):
-            return log_p(theta, fold_id, model_id)
         results = fold_batched_inference_loop(
             kernel_parameters=fold_kernel_params,
             batch_size=batch_size,
             ext_states=fold_state,
-            logjoint_density=logjoint_density_fold,
-            log_pred=log_p_fold,
+            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id),
+            log_pred=lambda theta: log_p(theta, fold_id, model_id),
         )
         return results
     # parallel warmup for each fold, initialize mcmc state
@@ -673,19 +648,23 @@ def run_cv_sel(
     states, kernel_params = jax.vmap(fold_warmup)(fold_ids, model_ids)
     # use python flow control for now but jax can actually do this too
     # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
+    # TODO: run a batch to get a better k estimate, then discard it
     drawss = []
     fold_esss, fold_rhatss, fold_elpdss = [], [], []
     total_esss, total_elpdss, elpd_diffs = [], [], []
     model_totals = jnp.vstack([jnp.repeat(jnp.array([1., 0.]), num_folds),
                                jnp.repeat(jnp.array([0., 1.]), num_folds)]).T
     model_diffs = jnp.repeat(jnp.array([1., -1.]), num_folds)  # A - B
+    init_lpred = states.log_pred_mean
     for i in range(max_batches):
         states = jax.vmap(run_batch)(fold_ids, model_ids, kernel_params, states)
         ess = pred_ess_folds(states)
         fold_esss.append(ess)
         rhats, _ = rhat(states.pred_ws)
         fold_rhatss.append(rhats)
-        fold_elpds = estimate_fold_elpds(states)
+        # compute avg predictive, removing initial condition first
+        log_pred_totals = states.log_pred_mean + jnp.log1p(jnp.exp(states.log_pred_mean - init_lpred))
+        fold_elpds = logsumexp(log_pred_totals, axis=1) - jnp.log((i+1)*num_chains*batch_size)  # average
         fold_elpdss.append(fold_elpds)
         drawss.append((i+1)*batch_size*num_chains)
         total_elpdss.append(fold_elpds @ model_totals)
