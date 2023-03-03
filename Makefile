@@ -39,7 +39,7 @@ nb: .venv
 .PHONY: test
 test: .venv
 	# run unit tests
-	$(PYTHON) -m unittest discover --buffer test
+	$(PYTHON) -m unittest discover -p '*_test.py' pcv
 
 .venv:
 	# create python virtual environment and install deps
