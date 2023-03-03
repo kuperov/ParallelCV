@@ -31,6 +31,22 @@ class TestUnivariateWelford(unittest.TestCase):
         self.assertAlmostEqual(batch_welford_var(w, ddof=0), bmeans.var(ddof=0), places=2)
 
 
+class TestLogWelford(unittest.TestCase):
+
+    def testMoments(self):
+        w0 = log_welford_init(shape=tuple())
+        key = jax.random.PRNGKey(0)
+        n = 5
+        lxs = jax.random.normal(key=key, shape=(n,))
+        xs = jnp.exp(lxs)
+        w, _ = jax.lax.scan(lambda carry_w, lx: (log_welford_add(lx, carry_w), None), w0, lxs)
+        mean = jax.scipy.special.logsumexp(lxs) - jnp.log(n)
+        self.assertAlmostEqual(log_welford_mean(w), mean, places=2)
+        self.assertAlmostEqual(log_welford_var(w), jnp.log(jnp.var(xs)), places=2)
+        self.assertAlmostEqual(log_welford_var(w, ddof=0), jnp.log(jnp.var(xs, ddof=0)), places=2)
+        self.assertAlmostEqual(log_welford_var(w, ddof=1), jnp.log(jnp.var(xs, ddof=1)), places=2)
+
+
 class TestMultivariateWelford(unittest.TestCase):
 
     def testVectorMoments(self):

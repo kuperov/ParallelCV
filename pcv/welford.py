@@ -199,3 +199,63 @@ def batch_vector_welford_cov(state: BatchVectorWelfordState, ddof=1):
     def resid_cov():  # include current batch
         return vector_welford_cov(vector_welford_add(vector_welford_mean(state.current), state.batches), ddof=ddof)
     return jax.lax.cond(state.current.n == 0, whole_cov, resid_cov)
+
+
+
+
+class LogWelfordState(NamedTuple):
+    """Welford state object for data expressed in logs.
+    
+    This can only handle positive values (of course) and the reference point
+    is zero. It is intended for densities.
+    """
+    logEx: jax.Array  # log of sum of values
+    logEx2: jax.Array  # log of sum of squared values
+    n: jax.Array  # number of data points
+
+
+def log_welford_init(shape) -> LogWelfordState:
+    """Initialize new welford algorithm state.
+    """
+    return LogWelfordState(
+        logEx=-jnp.inf*jnp.ones(shape=shape),
+        logEx2=-jnp.inf*jnp.ones(shape=shape),
+        n=jnp.zeros(shape=shape, dtype=int)
+    )
+
+
+def log_welford_add(logx: jax.Array, state: LogWelfordState) -> LogWelfordState:
+    return LogWelfordState(
+        logEx=jnp.logaddexp(state.logEx, logx),
+        logEx2=jnp.logaddexp(state.logEx2, 2*logx),
+        n=state.n + 1,
+    )
+
+
+def log_welford_mean(state: LogWelfordState):
+    # NB: Not valid if n == 0
+    return state.logEx - jnp.log(state.n)
+
+
+def log_welford_var(state: LogWelfordState, ddof=0):
+    # NB: Not valid if n <= 1
+    return (
+        - jnp.log(state.n - ddof)
+        + state.logEx2
+        + jnp.log1p(-jnp.exp(2*state.logEx - jnp.log(state.n) - state.logEx2))
+    )
+
+
+def log_welford_var_combine(state: LogWelfordState, ddof=1, comb_axis=(1,), out_axis=0):
+    """Univariate variance for data
+    
+    Axis should be the axis over which the data is combined.
+    """
+    ex2 = state.Ex2.sum(axis=comb_axis)
+    ex = state.Ex.sum(axis=comb_axis)
+    n = state.n.sum(axis=comb_axis)
+    K = jnp.reshape(state.K, (-1))[0]  # there has to be a better way than this
+    # TODO: check K is the same for all elements of the batch
+    def f(i):
+        return (ex2[i] - ex[i]**2 / n[i]) / (n[i] - ddof)
+    return jax.vmap(f)(jnp.arange(ex2.shape[out_axis]))
