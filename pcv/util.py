@@ -17,6 +17,13 @@ def logvar(logx, axis=0, ddof=0):
         - jnp.log(n - ddof)
     )
 
+
+def logmean(logx, axis=0):
+    """Compute log mean of logx."""
+    n = logx.shape[axis]
+    return logsumexp(logx, axis=axis) - jnp.log(n)
+
+
 def print_devices():
     """Print summary of available devices to console."""
     device_list = [f"{d.device_kind} ({d.platform}{d.id})" for d in jax.devices()]
