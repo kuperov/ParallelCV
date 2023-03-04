@@ -9,7 +9,7 @@ from pcv.welford import *
 class TestUnivariateWelford(unittest.TestCase):
 
     def testMoments(self):
-        w0 = welford_init(K=500)
+        w0 = welford_init(K=jnp.array(500.))
         key = jax.random.PRNGKey(0)
         xs = 200 + 200 * jax.random.normal(key=key, shape=(100,))
         w, _ = jax.lax.scan(lambda carry_w, x: (welford_add(x, carry_w), None), w0, xs)
@@ -24,7 +24,7 @@ class TestUnivariateWelford(unittest.TestCase):
         xs = jax.random.normal(key=key, shape=(n*b,))
         xbs = xs.reshape((n, b))  # n batches of size=b
         bmeans = xbs.mean(axis=1)
-        w0 = batch_welford_init(K=0.0, batch_size=b)
+        w0 = batch_welford_init(K=jnp.array(0.), batch_size=b)
         w, _ = jax.lax.scan(lambda carry_w, x: (batch_welford_add(x, carry_w), None), w0, xs)
         self.assertAlmostEqual(batch_welford_mean(w), bmeans.mean(), places=2)
         self.assertAlmostEqual(batch_welford_var(w, ddof=1), bmeans.var(ddof=1), places=2)

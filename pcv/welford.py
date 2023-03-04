@@ -3,6 +3,7 @@ from typing import NamedTuple
 import chex
 import jax
 import jax.numpy as jnp
+from jax.scipy.special import logsumexp
 
 
 class WelfordState(NamedTuple):
@@ -247,17 +248,30 @@ def log_welford_var(state: LogWelfordState, ddof=0):
     )
 
 
-def log_welford_var_combine(state: LogWelfordState, ddof=0, comb_axis=(1,), out_axis=0):
-    """Univariate variance for data
+def log_welford_var_combine(state: LogWelfordState, ddof:int=0, comb_axis:int=1, out_axis:int=0):
+    """Univariate variance for data from multiple welford states
     
     Axis should be the axis over which the data is combined.
+
+    Args:
+        state: log welford state, for measures in logs
+        ddof (int): degrees of freedom
+        comb_axis (tuple): axis over which to combine data
+        out_axis (int): axis over which to return results
+    
+    Return:
+        array of log variances of length of out_axis
     """
-    ex2 = state.logEx2.sum(axis=comb_axis)
-    ex = state.logEx.sum(axis=comb_axis)
+    log_ex2 = logsumexp(state.logEx2, axis=comb_axis)
+    log_ex = logsumexp(state.logEx, axis=comb_axis)
     n = state.n.sum(axis=comb_axis)
     def f(i):
-        return (ex2[i] - ex[i]**2 / n[i]) / (n[i] - ddof)
-    return jax.vmap(f)(jnp.arange(ex2.shape[out_axis]))
+        return (
+            log_ex2[i]
+            + jnp.log1p(- jnp.exp(2*log_ex[i] - log_ex2[i] - jnp.log(n[i])))
+            - jnp.log(n[i] - ddof)
+        )
+    return jax.vmap(f)(jnp.arange(log_ex2.shape[out_axis]))
 
 
 class BatchLogWelfordState(NamedTuple):

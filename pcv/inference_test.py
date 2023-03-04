@@ -7,7 +7,7 @@ import chex
 import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
-from pcv.inference import fold_posterior, inference_loop, offline_inference_loop, estimate_elpd, rhat_summary
+from pcv.inference import fold_posterior, inference_loop, estimate_elpd, rhat_summary
 import arviz as az
 import matplotlib.pyplot as plt
 
@@ -88,25 +88,25 @@ class TestInference(unittest.TestCase):
         def make_fold(fold_id):
             results = fold_posterior(
                 prng_key=inference_key,
-                inference_loop=inference_loop,
                 logjoint_density=lambda theta: logjoint_density(theta, fold_id),
                 log_p=lambda theta: log_pred(theta, fold_id),
                 make_initial_pos=make_initial_pos,
                 num_chains=10,
                 num_samples=10_000,
-                warmup_iter=2000)
+                warmup_iter=2000,
+                online=False)
             return results
 
         def replay_fold(fold_id, inference_key=inference_key):
             results, trace = fold_posterior(
                 prng_key=inference_key,
-                inference_loop=offline_inference_loop,
                 logjoint_density=lambda theta: logjoint_density(theta, fold_id),
                 log_p=lambda theta: log_pred(theta, fold_id),
                 make_initial_pos=make_initial_pos,
                 num_chains=10,
                 num_samples=2000,
-                warmup_iter=1000)
+                warmup_iter=1000,
+                online=False)
             pos = trace.position
             theta_dict = az.convert_to_inference_data(dict(beta=pos.beta, sigsq=jax.vmap(sigsq_t.forward)(pos.sigsq)))
             trace_az = az.convert_to_inference_data(theta_dict)
@@ -114,4 +114,16 @@ class TestInference(unittest.TestCase):
 
         online_fold_states = jax.vmap(make_fold)(jnp.arange(5))
         offline_fold_states, offline_fold_traces = jax.vmap(replay_fold)(jnp.arange(5))
-        
+
+
+class TestRhat(unittest.TestCase):
+
+    def test_log_rhat(self):
+        # log rhat should match level rhat
+        means = jnp.array([1.1, 1.05, 1.11, 1.02, 0.95])
+        vars = jnp.array([1.1, 1.2, 0.9, 1.1, 1.5])
+        ns = jnp.array([100, 100, 100, 100, 100])
+        #import pdb; pdb.set_trace()
+        rhat = base_rhat(means, vars, ns, axis=0)
+        log_rhat = base_rhat_log(jnp.log(means), jnp.log(vars), ns, axis=0)
+        chex.assert_trees_all_close(rhat, log_rhat)
