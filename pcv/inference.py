@@ -731,6 +731,7 @@ def run_cv_sel(
         ]).T
     model_diffs = jnp.repeat(jnp.array([1.0, -1.0]), num_folds)  # A - B
     fold_diffs = jnp.vstack([jnp.eye(num_folds), -jnp.eye(num_folds)])
+    has_not_stopped = True
     for i in range(max_batches):
         fold_drawss.append((i + 1) * batch_size * num_chains)
         states = jax.vmap(run_batch)(fold_ids, model_ids, kernel_params, states)
@@ -775,8 +776,12 @@ def run_cv_sel(
         if stop and not ignore_stoprule:
             print(f"Stopping after {i+1} batches")
             break
+        elif stop and has_not_stopped:
+            print(f"Triggered stoprule after {i+1} batches in {time.time() - start_at:.0f} seconds")
+            has_not_stopped = False
     else:
-        print(f"Warning: max batches ({max_batches}) reached")
+        if not ignore_stoprule:
+            print(f"Warning: max batches ({max_batches}) reached")
     iter, sec = (
         num_folds * num_chains * 2 * batch_size * (i + 1),
         time.time() - start_at,
