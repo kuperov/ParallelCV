@@ -5,15 +5,14 @@ import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 
 
-
 def logvar(logx, axis=0, ddof=0):
     """Compute log variance of logx."""
     n = logx.shape[axis]
     logmean = logsumexp(logx, axis=axis) - jnp.log(n)
-    logsumx2 = logsumexp(2*logx, axis=axis)
+    logsumx2 = logsumexp(2 * logx, axis=axis)
     return (
         logsumx2
-        + jnp.log1p(-jnp.exp(jnp.log(n) + 2*logmean - logsumx2))
+        + jnp.log1p(-jnp.exp(jnp.log(n) + 2 * logmean - logsumx2))
         - jnp.log(n - ddof)
     )
 
