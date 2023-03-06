@@ -274,6 +274,36 @@ def log_welford_var_combine(state: LogWelfordState, ddof:int=0, comb_axis:int=1,
     return jax.vmap(f)(jnp.arange(log_ex2.shape[out_axis]))
 
 
+def log_welford_log_var_combine(state: LogWelfordState, ddof:int=0, comb_axis:int=1, out_axis:int=0):
+    """Univariate log variance of log mean of data, combining multiple welford states
+    
+    This is a delta method estimate, var(log(mean)) = var/(mean^2*n) + approximation error.
+    Result is returned in log space to avoid underflow. Should work fine using fp32 values.
+
+    Parameter comb_axis should be the axis over which the data is combined, usually 1 (chains within a fold).
+
+    Args:
+        state: log welford state, for measures in logs
+        ddof (int): degrees of freedom
+        comb_axis (tuple): axis over which to combine data
+        out_axis (int): axis over which to return results
+    
+    Return:
+        array of log variances of length of out_axis
+    """
+    log_ex2 = logsumexp(state.logEx2, axis=comb_axis)
+    log_ex = logsumexp(state.logEx, axis=comb_axis)
+    n = state.n.sum(axis=comb_axis)
+    def f(i):
+        log_var = (
+            log_ex2[i]
+            + jnp.log1p(- jnp.exp(2*log_ex[i] - log_ex2[i] - jnp.log(n[i])))
+            - jnp.log(n[i] - ddof)
+        )
+        return log_var - 2*log_ex[i] - jnp.log(n[i]) # log(var/(n*mean**2))
+    return jax.vmap(f)(jnp.arange(log_ex2.shape[out_axis]))
+
+
 class BatchLogWelfordState(NamedTuple):
     """Welford state object for batch means of univariate data."""
     batch_size: int

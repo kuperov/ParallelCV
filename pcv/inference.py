@@ -184,7 +184,7 @@ class SigmoidParam(NamedTuple):
     std: jax.Array
 
 
-def sigmoid_transform_param(state: WelfordState, axis: Tuple = 0) -> SigmoidParam:
+def sigmoid_transform_param(state: WelfordState, axis: int = 0) -> SigmoidParam:
     """Return sigmoid transform parameters estimated from welford state.
     
     This method combines multiple means and variances by averaging over the specified axis.
@@ -561,20 +561,32 @@ def run_cv(
     # use python flow control for now but jax can actually do this too
     # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
     esss, rhatss, elpdss, drawss = [], [], [], []
+    mcses = []
     for i in range(max_batches):
         states = jax.vmap(run_batch)(fold_ids, kernel_params, states)
         ess = pred_ess_folds(states)
         esss.append(ess)
         rhats = rhat_log(states.pred_ws)
         rhatss.append(rhats)
-        elpd = logmean(log_welford_mean(states.pred_ws), axis=1)
+        elpd_contribs = log_welford_mean(states.pred_ws)
+        elpd = logmean(elpd_contribs, axis=1)
         elpdss.append(elpd)
         drawss.append((i+1)*batch_size*num_chains)
-        # TODO: stopping condish
+        log_mcvar = log_welford_log_var_combine(states.pred_bws.batches, ddof=1)
+        mcses.append(jnp.exp(0.5*log_mcvar))
     else:
         print(f'Warning: max batches ({max_batches}) reached')
     ess, rhats, elpds, draws = jnp.stack(esss), jnp.stack(rhatss), jnp.stack(elpdss), jnp.stack(drawss)
-    return {'ess': ess, 'rhat': rhats, 'elpd': elpds, 'draws': draws}
+    mcse = jnp.stack(mcses)
+    total_elpd = jnp.sum(elpds, axis=1)
+    total_mcse = jnp.sqrt(jnp.sum(mcse**2, axis=1))
+    elpd_var = jnp.var(elpds, axis=1)
+    total_cvse = jnp.sqrt(elpd_var)
+    total_se = jnp.sqrt(total_mcse**2 + elpd_var)
+    return {
+        'ess': ess, 'rhat': rhats, 'elpd': elpds, 'draws': draws, 'mcse': mcse,
+        'total_elpd': total_elpd, 'total_mcse': total_mcse, 'total_cvse': total_cvse, 'total_se': total_se
+    }
 
 
 def run_cv_sel(
@@ -634,36 +646,64 @@ def run_cv_sel(
     # use python flow control for now but jax can actually do this too
     # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
     # TODO: run a batch to get a better k estimate, then discard it
-    drawss = []
-    fold_esss, fold_rhatss, fold_elpdss = [], [], []
-    total_esss, total_elpdss, elpd_diffs = [], [], []
+    fold_drawss, fold_esss, fold_rhatss, fold_elpds, fold_mcses, fold_elpd_diffss = [], [], [], [], [], []
+    diff_mcses, diff_elpd, diff_cvses, diff_ses = [], [], [], []
+    model_esss, model_elpdss, model_mcses, model_cvses, model_ses = [], [], [], [], []
     model_totals = jnp.vstack([jnp.repeat(jnp.array([1., 0.]), num_folds),
                                jnp.repeat(jnp.array([0., 1.]), num_folds)]).T
     model_diffs = jnp.repeat(jnp.array([1., -1.]), num_folds)  # A - B
+    fold_diffs = jnp.vstack([jnp.eye(num_folds), -jnp.eye(num_folds)])
     for i in range(max_batches):
+        fold_drawss.append((i+1)*batch_size*num_chains)
         states = jax.vmap(run_batch)(fold_ids, model_ids, kernel_params, states)
-        ess = pred_ess_folds(states)
-        fold_esss.append(ess)
-        rhats = rhat_log(states.pred_ws)
-        fold_rhatss.append(rhats)
-        fold_elpds = logmean(log_welford_mean(states.pred_ws), axis=1)
-        fold_elpdss.append(fold_elpds)
-        drawss.append((i+1)*batch_size*num_chains)
-        total_elpdss.append(fold_elpds @ model_totals)
-        total_esss.append(ess @ model_totals)
-        elpd_diffs.append(fold_elpds @ model_diffs)
+        fold_ess = pred_ess_folds(states)
+        # per-fold statistics
+        fold_esss.append(fold_ess)
+        fold_rhats = rhat_log(states.pred_ws)
+        fold_rhatss.append(fold_rhats)
+        fold_mcvars = jnp.exp(log_welford_log_var_combine(states.pred_bws.batches, ddof=1))
+        fold_mcses.append(jnp.sqrt(fold_mcvars))
+        fold_elpd = logmean(log_welford_mean(states.pred_ws), axis=1)
+        fold_elpds.append(fold_elpd)
+        fold_elpd_diffs = fold_elpd @ fold_diffs
+        fold_elpd_diffss.append(fold_elpd_diffs)
+        # per-model statistics
+        model_elpdss.append(fold_elpd @ model_totals)
+        model_esss.append(fold_ess @ model_totals)
+        model_mcvars = fold_mcvars @ model_totals
+        model_mcses.append(jnp.sqrt(model_mcvars))
+        model_cvvar = jnp.var(jnp.reshape(fold_elpd, (2, num_folds)), ddof=1, axis=1)
+        model_cvses.append(jnp.sqrt(model_cvvar))
+        model_se = jnp.sqrt(fold_mcvars @ model_totals + model_cvvar)
+        model_ses.append(model_se)
+        # difference statistics (elpd(A) - elpd(B))
+        diff_elpd.append(fold_elpd @ model_diffs)
+        diff_cvses.append(jnp.std(fold_elpd_diffs, ddof=1))
+        # contributions to diff_mcses and diff_ses are independent, so add them
+        diff_mcses.append(jnp.sqrt(jnp.sum(model_mcvars)))
+        diff_ses.append(jnp.sqrt(jnp.var(fold_elpd_diffs, ddof=1) + jnp.sum(model_mcvars)))
         # TODO: apply stopping condition using a callback (this means we can test several of them offline)
     else:
         print(f'Warning: max batches ({max_batches}) reached')
-    ess, rhats, elpds, draws = jnp.stack(fold_esss), jnp.stack(fold_rhatss), jnp.stack(fold_elpdss), jnp.stack(drawss)
     return {
-        'ess': ess,
-        'rhat': rhats,
-        'elpd': elpds,
-        'draws': draws,
-        'total_ess': total_esss,
-        'total_elpd': total_elpdss,
-        'elpd_diff': elpd_diffs}
+        'fold_ess': jnp.stack(fold_esss),
+        'fold_rhat': jnp.stack(fold_rhatss),
+        'fold_elpd': jnp.stack(fold_elpds),
+        'fold_draws': jnp.stack(fold_drawss),
+        'fold_mcse': jnp.stack(fold_mcses),
+        'fold_elpd_diff': jnp.stack(fold_elpd_diffss),
+        'model_ess': jnp.stack(model_esss),
+        'model_elpd': jnp.stack(model_elpdss),
+        'model_mcse': jnp.stack(model_mcses),
+        'model_cvse': jnp.stack(model_cvses),
+        'model_se': jnp.stack(model_ses),
+        'diff_elpd': jnp.stack(diff_elpd),
+        'diff_cvse': jnp.stack(diff_cvses),
+        'diff_mcse': jnp.stack(diff_mcses),
+        'diff_se': jnp.stack(diff_ses),
+        'num_folds': num_folds,
+        'num_chains': num_chains,
+    }
 
 
 def base_rhat(means: jax.Array, vars: jax.Array, n: jax.Array, axis:int=1) -> jax.Array:
