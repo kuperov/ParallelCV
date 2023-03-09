@@ -13,11 +13,9 @@ def plot_model_results(results, title):
     diff_elpd, diff_se = results['diff_elpd'], results['diff_se']
     diff_mcse, diff_cvse = results['diff_mcse'], results['diff_cvse']
     tcrit = tfd.StudentT(df=results['num_folds']+2, loc=0, scale=1.).quantile(0.975)
-    stop_drawk = draws[results['stop']][0]
 
     # mean
     line_m = p_diff.plot(draws, diff_elpd, linestyle='solid', color='w')
-    p_diff.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
     # standard error
     line_se = p_diff.plot(draws, diff_elpd + tcrit*diff_se, linestyle='dashed', color='w')
     p_diff.plot(draws, diff_elpd - tcrit*diff_se, linestyle='dashed', color='w')
@@ -45,23 +43,27 @@ def plot_model_results(results, title):
     for m in [0, 1]:
         line = p_rhat.plot(draws, model_rhat[:, m], linestyle='solid', label=f'Model {["A","B"][m]}')
         plot_handles.append(line[0])
-    p_rhat.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
     p_rhat.set_title(r'Model fold max $\widehat{R}$')
     p_rhat.legend(handles=plot_handles)
     p_rhat.set_ylabel(r'Model $\widehat{R}$')
 
     p_ess.plot(draws, ess, linestyle='solid')
-    p_ess.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
     p_ess.set_title(r'Model $\widehat{ESS}$ by draw')
     p_ess.legend(['Model A', 'Model B'])
     p_ess.set_ylabel(r"$\widehat{ESS}$ per model ('000)")
 
     p_err.plot(draws, diff_cvse, label='Cross-validation SE', linestyle='dashed')
     p_err.plot(draws, diff_mcse, label='Monte Carlo SE', linestyle='dotted')
-    p_err.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
     p_err.legend()
     p_err.set_title(r'$\widehat{elpd}_{CV}$ difference error components')
     p_err.set_ylabel('Standard error (nats)')
+
+    if jnp.sum(results['stop'])>0:
+        stop_drawk = draws[results['stop']][0]
+        p_diff.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
+        p_rhat.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
+        p_err.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
+        p_ess.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
 
     for rax in axes:
         for ax in rax:
@@ -87,7 +89,7 @@ def plot_fold_results(results, title):
     p_rhat.plot(drawsk, results['fold_rhat'][:,K:], linestyle='dashed')
     p_rhat.set_title(r'$\widehat{R}$')
     p_rhat.set_ylabel(r'Per-fold $\widehat{R}$')
-    p_rhat.legend([f'model {"A" if i <= 4 else "B"} fold {i % 5}' for i in range(10)], ncol=2)
+    p_rhat.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
     p_rhat.set_ylim(bottom=1.)
 
     fold_diff, fold_mcse = results['fold_elpd_diff'], results['fold_mcse']
