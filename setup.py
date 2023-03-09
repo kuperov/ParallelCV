@@ -36,6 +36,5 @@ setup(
     ],
     packages=find_packages(exclude=["test"]),
     install_requires=_parse_requirements("requirements.txt"),
-    tests_require=_parse_requirements("requirements-tests.txt"),
     include_package_data=True,
 )

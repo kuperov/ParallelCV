@@ -8,11 +8,13 @@ Setting up
 
 You'll need python ≥ 3.7. Alex uses CPython 3.10, although it is probably easiest to use Anaconda. YMMV.
 
-On a reasonable OS you should be able to create the virtual environment that contains runtime and development dependencies with:
+You need to create a virtual environment and install the
+dependencies in requirements/requirements.txt. Note that the
+blackjax dependency has been held back to an older version 
+because its API is changing. The latest version won't work.
+
+On a Debian-ish linux box you can do:
 
     git clone git@github.com:kuperov/ParallelCV.git
     cd ParallelCV
     make config
-
-If you don't already have a python development environment you prefer, VSCode is free and has a shallow learning curve.
-
