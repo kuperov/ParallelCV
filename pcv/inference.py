@@ -777,11 +777,10 @@ def run_cv_sel(
         )
         stoprules.append(stop)
         if i % 10 == 0:
-            print(f"Batch {i+1} of {max_batches}.")
+            print(f"Batch {i+1} of {max_batches}. Stopping: {stop}")
             print(f"    Model A: ELPD = {model_elpdss[-1][0]:.2f} ± {model_ses[-1][0]:.2f}")
             print(f"    Model B: ELPD = {model_elpdss[-1][1]:.2f} ± {model_ses[-1][1]:.2f}")
             print(f"    Diff: {diff_elpd[-1]:.2f} ± {diff_ses[-1]:.2f}")
-            print(f"Stopping: {stop}")
         if stop and not ignore_stoprule:
             print(f"Stopping after {i+1} batches")
             break
