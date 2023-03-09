@@ -1,4 +1,4 @@
-import arviz as az
+# import arviz as az
 import chex
 import jax.numpy as jnp
 

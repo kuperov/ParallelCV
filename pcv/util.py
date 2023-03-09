@@ -1,5 +1,5 @@
 import jax
-import arviz as az
+# import arviz as az
 import jax
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
@@ -32,15 +32,15 @@ def print_devices():
         print("Only CPU is available. Check cuda/cudnn library versions.")
 
 
-def to_arviz(theta, post_id: int) -> az.InferenceData:
-    """Export a chain of draws to Arviz for visualization, etc.
+# def to_arviz(theta, post_id: int) -> az.InferenceData:
+#     """Export a chain of draws to Arviz for visualization, etc.
 
-    Args:
-        theta: pytreee of draws
-        post_id: zero-based posterior id
-    """
-    pos = tree_map(lambda x: x[post_id, ...], theta)
-    theta_dict = az.convert_to_inference_data(
-        dict(beta=pos.beta, sigsq=jax.vmap(sigsq_t.forward)(pos.sigsq))
-    )
-    return az.convert_to_inference_data(theta_dict)
+#     Args:
+#         theta: pytreee of draws
+#         post_id: zero-based posterior id
+#     """
+#     pos = tree_map(lambda x: x[post_id, ...], theta)
+#     theta_dict = az.convert_to_inference_data(
+#         dict(beta=pos.beta, sigsq=jax.vmap(sigsq_t.forward)(pos.sigsq))
+#     )
+#     return az.convert_to_inference_data(theta_dict)
