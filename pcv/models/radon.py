@@ -57,7 +57,7 @@ def get_data():
     """Load radon data from zip file.
     """
     # https://github.com/stan-dev/posteriordb/blob/master/posterior_database/data/data/radon_all.json.zip
-    zdat = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'radon_all.json.zip')
+    zdat = os.path.join(os.path.dirname(__file__), 'radon_all.json.zip')
     raw_data = {}
     with zipfile.ZipFile(zdat, "r") as z:
         for filename in z.namelist():
