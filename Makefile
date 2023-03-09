@@ -1,10 +1,10 @@
-# diag package 
+# pcv package 
 
 PYTHON=.venv/bin/python3
 JUPYTER=.venv/bin/jupyter-lab
 
 define HELP
-diag package Makefile
+pcv package Makefile
 
 The following targets are available:
 
@@ -48,20 +48,20 @@ test: .venv
 	python3 -m virtualenv --python=python3 .venv
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install -r requirements/requirements.txt
-	$(PYTHON) -m pip install -r requirements/requirements-dev.txt
+	# $(PYTHON) -m pip install -r requirements/requirements-dev.txt
 	$(PYTHON) setup.py develop
 
 pretty:
-	.venv/bin/isort --profile black diag test
-	.venv/bin/black diag test
+	.venv/bin/isort --profile black pcv
+	.venv/bin/black pcv
 
 lint:
 	# check code formatting (fix with "make pretty")
-	.venv/bin/black --check diag test
-	.venv/bin/isort --profile black --check-only diag test
+	.venv/bin/black --check pcv
+	.venv/bin/isort --profile black --check-only diag
 	# check for obvious bugs or code standard violations
-	.venv/bin/flake8 diag test
-	.venv/bin/pylint test pcv  # main code not ready to lint yet
+	.venv/bin/flake8 diag
+	.venv/bin/pylint pcv  # main code not ready to lint yet
 
 gpu:
 	# install gpu-enabled version of jax
