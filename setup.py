@@ -34,7 +34,7 @@ setup(
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.7",
     ],
-    packages=find_packages(), #['pcv','pcv.models'],
+    packages=['pcv','pcv.models'],
     package_data={'pcv.models': ['radon_all.json.zip']},
     install_requires=_parse_requirements("requirements.txt"),
     include_package_data=True,
