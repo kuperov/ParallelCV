@@ -73,7 +73,7 @@ def plot_model_results(results, title):
     fig.tight_layout()
 
 
-def plot_fold_results(results, title):
+def plot_fold_results(results, title, show_legend=True):
     fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(16, 5))
     p_ess, p_rhat, p_elpds = axes
     drawsk, essk = results['fold_draws'] * 1e-3, results['fold_ess'] * 1e-3
@@ -89,7 +89,8 @@ def plot_fold_results(results, title):
     p_rhat.plot(drawsk, results['fold_rhat'][:,K:], linestyle='dashed')
     p_rhat.set_title(r'$\widehat{R}$')
     p_rhat.set_ylabel(r'Per-fold $\widehat{R}$')
-    p_rhat.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
+    if show_legend:
+        p_rhat.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
     p_rhat.set_ylim(bottom=1.)
 
     fold_diff, fold_mcse = results['fold_elpd_diff'], results['fold_mcse']
@@ -102,7 +103,8 @@ def plot_fold_results(results, title):
     p_elpds.axhline(y=0, color='w', linestyle='solid', linewidth=0.5)
     p_elpds.set_title(r'$\widehat{elpd}_{CV}$ differences')
     p_elpds.set_ylabel(r'Per-fold $\widehat{elpd}_{CV}$ differences')
-    p_elpds.legend(handles=handles, ncol=2)
+    if show_legend:
+        p_elpds.legend(handles=handles, ncol=2)
 
     for ax in axes:
         ax.set_xlabel("Draws per fold ('000; total of all chains)")

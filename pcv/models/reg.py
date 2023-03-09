@@ -2,10 +2,6 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
-from pcv.inference import run_cv_sel
-from pcv.welford import *
-from pcv.plots import plot_model_results, plot_fold_results
-import matplotlib.pyplot as plt
 
 tfd = tfp.distributions
 tfb = tfp.bijectors
@@ -59,7 +55,7 @@ def get_model(y, X, K=5):
         return lp + ll + sigsq_ldj
 
     # predictive density log p(y_train|theta)
-    def log_pred(theta, fold_id, model_id):
+    def log_pred(theta: Theta, fold_id: int, model_id: int):
         # transform to constrained space
         sigsq = sigsq_t.forward(theta.sigsq)
         pred_mask = (jnp.arange(N) % K) == fold_id
@@ -68,11 +64,11 @@ def get_model(y, X, K=5):
         return (pred_mask * ll_contribs).sum()
 
     # random initialization in the constrained parameter space
-    def make_initial_pos(key):
+    def make_initial_pos(key: jax.random.KeyArray):
         k1, k2 = jax.random.split(key)
         theta = Theta(
-        beta=jax.random.normal(key=k1, shape=(p,)),
-        sigsq=jax.random.normal(key=k2))
+            beta=jax.random.normal(key=k1, shape=(p,)),
+            sigsq=jax.random.normal(key=k2))
         return theta
 
     return logjoint_density, log_pred, make_initial_pos

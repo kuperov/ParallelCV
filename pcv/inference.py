@@ -600,9 +600,11 @@ def run_cv(
         )
         return results
 
+    print(f"Warmup: {warmup_iter} iterations, {num_folds} folds at {num_chains} chains per fold...")
     # parallel warmup for each fold, initialize mcmc state
     fold_ids = jnp.arange(num_folds)
     states, kernel_params = jax.vmap(fold_warmup, in_axes=(0,))(fold_ids)
+    print(f"Running {max_batches} batches of {batch_size} iterations on {num_folds*num_chains} chains...")
     # use python flow control for now but jax can actually do this too
     # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
     esss, rhatss, elpdss, drawss = [], [], [], []
@@ -619,6 +621,7 @@ def run_cv(
         drawss.append((i + 1) * batch_size * num_chains)
         log_mcvar = log_welford_log_var_combine(states.pred_bws.batches, ddof=1)
         mcses.append(jnp.exp(0.5 * log_mcvar))
+        print(f"Batch {i+1}: {jnp.sum(ess)} total ess")
     else:
         print(f"Warning: max batches ({max_batches}) reached")
     ess, rhats, elpds, draws = (
