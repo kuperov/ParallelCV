@@ -15,39 +15,30 @@ def plot_model_results(results, title):
     tcrit = tfd.StudentT(df=results['num_folds']+2, loc=0, scale=1.).quantile(0.975)
 
     # mean
-    line_m = p_diff.plot(draws, diff_elpd, linestyle='solid', color='b')
+    line_m = p_diff.plot(draws, diff_elpd, linestyle='solid')
     # standard error
-    line_se = p_diff.plot(draws, diff_elpd + tcrit*diff_se, linestyle='dashed', color='b')
-    p_diff.plot(draws, diff_elpd - tcrit*diff_se, linestyle='dashed', color='b')
+    line_se = p_diff.plot(draws, diff_elpd + tcrit*diff_se, linestyle='dashed')
+    p_diff.plot(draws, diff_elpd - tcrit*diff_se, linestyle='dashed', color=line_se[0].get_color())
     # Monte Carlo standard error
-    line_mcse = p_diff.plot(draws, diff_elpd + 1.96*diff_mcse, linestyle='dotted', color='b')
-    p_diff.plot(draws, diff_elpd - 1.96*diff_mcse, linestyle='dotted', color='b')
-    p_diff.axhline(y=0, color='b', linestyle='solid', linewidth=0.5)
+    line_mcse = p_diff.plot(draws, diff_elpd + 1.96*diff_mcse, linestyle='dotted')
+    p_diff.plot(draws, diff_elpd - 1.96*diff_mcse, linestyle='dotted', color=line_mcse[0].get_color())
+    p_diff.axhline(y=0, linestyle='solid', linewidth=0.5)
     p_diff.set_title(r'Model $\widehat{elpd}_{CV}$ difference')
     p_diff.set_xlabel('Num. draws (all folds, chains)')
     p_diff.set_ylabel(r'$\widehat{elpd}_{CV}$ difference')
     p_diff.legend([line_m[0], line_se[0], line_mcse[0]], ['Estimate', 'Total error', 'Monte Carlo error'])
 
-    # model_elpd, model_se = results['model_elpd'], results['model_se']
-    # plot_handles = []
-    # for m in [0, 1]:
-    #     plot = p_elpds.plot(draws, model_elpd[:, m], linestyle='solid')
-    #     p_elpds.plot(draws, model_elpd[:, m] + tcrit * model_se[:, m], linestyle='dashed', color=plot[0].get_color())
-    #     p_elpds.plot(draws, model_elpd[:, m] - tcrit * model_se[:, m], linestyle='dashed', color=plot[0].get_color())
-    #     plot_handles.append(plot[0])
-    # p_elpds.set_title(r'Model $\widehat{elpd}_{CV}$')
-    # p_elpds.legend(handles=plot_handles, labels=['Model A', 'Model B'])
-    # p_elpds.set_ylabel(r'Model $\widehat{elpd}_{CV}$')
     model_rhat = results['model_max_rhat']
     plot_handles = []
     for m in [0, 1]:
         line = p_rhat.plot(draws, model_rhat[:, m], linestyle='solid', label=f'Model {["A","B"][m]}')
         plot_handles.append(line[0])
+    p_rhat.axhline(1., linestyle='dashed', linewidth=0.5)
     p_rhat.set_title(r'Model fold max $\widehat{R}$')
     p_rhat.legend(handles=plot_handles)
     p_rhat.set_ylabel(r'Model $\widehat{R}$')
     p_rhat.set_xlim(left=0)
-    p_rhat.set_ylim(bottom=0, top=min(100, jnp.max(model_rhat)))
+    p_rhat.set_ylim(bottom=min(1, float(jnp.min(model_rhat))), top=min(100, float(jnp.max(model_rhat))))
 
     p_ess.plot(draws, ess, linestyle='solid')
     p_ess.set_title(r'Model $\widehat{ESS}$ by draw')
@@ -62,10 +53,10 @@ def plot_model_results(results, title):
 
     if jnp.sum(results['stop'])>0:
         stop_drawk = draws[results['stop']][0]
-        p_diff.axvline(x=stop_drawk, color='b', linestyle='dashed', linewidth=0.5)
-        p_rhat.axvline(x=stop_drawk, color='b', linestyle='dashed', linewidth=0.5)
-        p_err.axvline(x=stop_drawk, color='b', linestyle='dashed', linewidth=0.5)
-        p_ess.axvline(x=stop_drawk, color='b', linestyle='dashed', linewidth=0.5)
+        stopline = p_diff.axvline(x=stop_drawk, linestyle='dashed', linewidth=0.5)
+        p_rhat.axvline(x=stop_drawk, color=stopline.get_color(), linestyle='dashed', linewidth=0.5)
+        p_err.axvline(x=stop_drawk, color=stopline.get_color(), linestyle='dashed', linewidth=0.5)
+        p_ess.axvline(x=stop_drawk, color=stopline.get_color(), linestyle='dashed', linewidth=0.5)
 
     for rax in axes:
         for ax in rax:
@@ -102,7 +93,7 @@ def plot_fold_results(results, title, show_legend=True):
         p_elpds.plot(drawsk, fold_diff[:,k] + tcrit * fold_mcse[:,k], linestyle='dotted', color=line[0].get_color())
         p_elpds.plot(drawsk, fold_diff[:,k] - tcrit * fold_mcse[:,k], linestyle='dotted', color=line[0].get_color())
         handles.append(line[0])
-    p_elpds.axhline(y=0, color='b', linestyle='solid', linewidth=0.5)
+    p_elpds.axhline(y=0, linestyle='solid', linewidth=0.5)
     p_elpds.set_title(r'$\widehat{elpd}_{CV}$ differences')
     p_elpds.set_ylabel(r'Per-fold $\widehat{elpd}_{CV}$ differences')
     if show_legend:

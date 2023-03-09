@@ -102,10 +102,6 @@ class ExtendedState(NamedTuple):
     rng_key: jax.random.KeyArray  # current random seed
     pred_ws: LogWelfordState  # accumulator for log predictive
     pred_bws: BatchLogWelfordState  # batch accumulator for log predictive
-    log_pred_mean: jax.Array  # log of mean predictive
-    param_ws: WelfordState  # accumulator for parameters
-    param_vws: VectorWelfordState  # vector accumulator for parameters
-    param_bws: BatchVectorWelfordState  # vector batch accumulator for parameters
     divergences: jax.Array  # divergence counts (int array)
 
 
@@ -150,21 +146,6 @@ def estimate_elpd_diff(
     model_B = float(((fold_indexes == model_B_folds) * fmeans).sum())
     elpd_diff = model_A - model_B
     return elpd_diff, model_A, model_B
-
-
-def mv_ess_folds(extended_state: ExtendedState):
-    """Multivariate ESS for parameters"""
-    Sigmas = vector_welford_cov_combine(extended_state.param_bws.batches)
-    Lambdas = vector_welford_cov_combine(extended_state.param_vws)
-    ns = extended_state.param_vws.n.sum(axis=(1,))
-    nfolds, p = Sigmas.shape[0], Sigmas.shape[1]
-
-    def f(i):
-        return ns[i] * (jnp.linalg.det(Sigmas[i]) / jnp.linalg.det(Lambdas[i])) ** (
-            1 / p
-        )
-
-    return jax.vmap(f)(jnp.arange(nfolds))
 
 
 def pred_ess_folds(extended_state: ExtendedState):
@@ -275,25 +256,14 @@ def inference_loop(
         elpd_contrib = (
             log_pred(chain_state.position) - log_samp
         )  # contrib to mean log predictive
-        carry_log_pred_mean = ext_state.log_pred_mean + jnp.log1p(
-            jnp.exp(elpd_contrib - ext_state.log_pred_mean)
-        )
         div_count = ext_state.divergences + 1.0 * chain_info.is_divergent
         carry_pred_ws = log_welford_add(elpd_contrib, ext_state.pred_ws)
         carry_pred_bws = batch_log_welford_add(elpd_contrib, ext_state.pred_bws)
-        carry_param_ws = tree_map(welford_add, chain_state.position, ext_state.param_ws)
-        vec_pos = jnp.hstack(jax.tree_util.tree_flatten(chain_state.position)[0])
-        param_bws = batch_vector_welford_add(vec_pos, ext_state.param_bws)
-        param_vws = vector_welford_add(vec_pos, ext_state.param_vws)
         carry_state = ExtendedState(
             state=chain_state,
             rng_key=carry_key,
             pred_ws=carry_pred_ws,
             pred_bws=carry_pred_bws,
-            log_pred_mean=carry_log_pred_mean,
-            param_ws=carry_param_ws,
-            param_bws=param_bws,
-            param_vws=param_vws,
             divergences=div_count,
         )
         if online:
@@ -308,11 +278,6 @@ def inference_loop(
             rng_key=state.rng_key,
             pred_ws=state.pred_ws,
             pred_bws=state.pred_bws,
-            log_pred_mean=state.log_pred_mean
-            + jnp.log1p(-jnp.exp(init_pred - state.log_pred_mean)),
-            param_ws=state.param_ws,
-            param_bws=state.param_bws,
-            param_vws=state.param_vws,
             divergences=state.divergences,
         )
 
@@ -321,10 +286,6 @@ def inference_loop(
         rng_key=rng_key,
         pred_ws=log_welford_init(shape=tuple()),
         pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
-        log_pred_mean=init_pred,
-        param_ws=tree_map(welford_init, theta_center),
-        param_bws=batch_vector_welford_init(vec_theta_center, batch_size),
-        param_vws=vector_welford_init(vec_theta_center),
         divergences=jnp.array(0),
     )
     state, trace = jax.lax.scan(one_mcmc_step, init_state, jnp.arange(0, num_samples))
@@ -443,10 +404,6 @@ def init_batch_inference_state(
             rng_key=chain_rng_key,
             pred_ws=log_welford_init(shape=tuple()),
             pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
-            log_pred_mean=init_pred,
-            param_ws=tree_map(welford_init, theta_center),
-            param_bws=batch_vector_welford_init(vec_theta_center, batch_size),
-            param_vws=vector_welford_init(vec_theta_center),
             divergences=jnp.array(0),
         )
 
@@ -500,27 +457,14 @@ def fold_batched_inference_loop(
             elpd_contrib = log_pred(
                 chain_state.position
             )  # contrib to mean log predictive
-            carry_log_pred_mean = ext_state.log_pred_mean + jnp.log1p(
-                jnp.exp(elpd_contrib - ext_state.log_pred_mean)
-            )
             div_count = ext_state.divergences + 1.0 * chain_info.is_divergent
             carry_pred_ws = log_welford_add(elpd_contrib, ext_state.pred_ws)
             carry_pred_bws = batch_log_welford_add(elpd_contrib, ext_state.pred_bws)
-            carry_param_ws = tree_map(
-                welford_add, chain_state.position, ext_state.param_ws
-            )
-            vec_pos = jnp.hstack(jax.tree_util.tree_flatten(chain_state.position)[0])
-            param_bws = batch_vector_welford_add(vec_pos, ext_state.param_bws)
-            param_vws = vector_welford_add(vec_pos, ext_state.param_vws)
             carry_state = ExtendedState(
                 state=chain_state,
                 rng_key=carry_key,
                 pred_ws=carry_pred_ws,
                 pred_bws=carry_pred_bws,
-                log_pred_mean=carry_log_pred_mean,
-                param_ws=carry_param_ws,
-                param_bws=param_bws,
-                param_vws=param_vws,
                 divergences=div_count,
             )
             return carry_state, None  # don't retain chain trace
@@ -735,6 +679,7 @@ def run_cv_sel(
     model_diffs = jnp.repeat(jnp.array([1.0, -1.0]), num_folds)  # A - B
     fold_diffs = jnp.vstack([jnp.eye(num_folds), -jnp.eye(num_folds)])
     has_not_stopped = True
+    i = 0
     for i in range(max_batches):
         fold_drawss.append((i + 1) * batch_size * num_chains)
         states = jax.vmap(run_batch)(fold_ids, model_ids, kernel_params, states)
@@ -777,10 +722,10 @@ def run_cv_sel(
         )
         stoprules.append(stop)
         if i % 10 == 0:
-            print(f"Batch {i+1} of {max_batches}. Stopping: {stop}")
-            print(f"    Model A: ELPD = {model_elpdss[-1][0]:.2f} ± {model_ses[-1][0]:.2f}")
-            print(f"    Model B: ELPD = {model_elpdss[-1][1]:.2f} ± {model_ses[-1][1]:.2f}")
-            print(f"    Diff: {diff_elpd[-1]:.2f} ± {diff_ses[-1]:.2f}")
+            print(f"{i+1: 4d}. "
+                f" A: {model_elpdss[-1][0]:.2f} ±{model_ses[-1][0]:.2f} B: {model_elpdss[-1][1]:.2f} ±{model_ses[-1][1]:.2f}"
+                f" Diff: {diff_elpd[-1]:.2f} ±{diff_ses[-1]:.2f}"
+                + (" stop" if stop else " continue"))
         if stop and not ignore_stoprule:
             print(f"Stopping after {i+1} batches")
             break
@@ -790,11 +735,10 @@ def run_cv_sel(
     else:
         if not ignore_stoprule:
             print(f"Warning: max batches ({max_batches}) reached")
-    iter, sec = (
-        num_folds * num_chains * 2 * batch_size * (i + 1),
-        time.time() - start_at,
-    )
-    print(f"Drew {iter} iterations in {sec:.1f} seconds ({iter/sec:.0f} i/s)")
+    iter = num_folds * num_chains * 2 * batch_size * (i + 1)
+    total_sec = time.time() - start_at
+    min, sec = int(total_sec) // 60, total_sec % 60
+    print(f"Drew {iter} samples in {min:.0f} min {sec:.0f} sec ({iter/total_sec:.0f} i/s)")
     return {
         "fold_ess": jnp.stack(fold_esss),
         "fold_rhat": jnp.stack(fold_rhatss),
@@ -941,49 +885,3 @@ def rhat_log(log_welford_tree):
         log_welford_tree,
         is_leaf=lambda x: isinstance(x, LogWelfordState),
     )
-
-
-def rhat_summary(fold_states: ExtendedState):
-    """Compute Rhat and folded Rhat from welford states of chains.
-
-    This version assumes there are multiple posteriors, so that the states have dimension
-    (cv_fold #, chain #, ...).
-
-    Args:
-        fold_states: pytree of Welford states
-
-    Returns:
-        pandas data frame summarizing rhats
-    """
-    par_rh, par_frh = rhat(fold_states.param_ws)
-    pred_rh = rhat_log(fold_states.pred_ws)
-    K = pred_rh.shape[0]
-    rows = []
-    max_row = None
-    for i in range(K):
-        for par, pred, meas in [
-            (par_rh, pred_rh, "Rhat"),
-            (par_frh, None, "Folded Rhat"),
-        ]:
-            row = {"fold": f"Fold {i}", "measure": meas}
-            for j, parname in enumerate(par._fields):
-                if jnp.ndim(par[j]) > 1:
-                    # vector parameter, add a column for each element
-                    for k in range(par[j].shape[1]):
-                        row[f"{parname}[{k}]"] = float(par[j][i][k])
-                else:
-                    row[parname] = float(par[j][i])
-            row["log p"] = float(pred[i]) if (pred is not None) else None
-            rows.append(row)
-            if max_row:
-                max_row = {
-                    k: max_row[k]
-                    if isinstance(max_row[k], str)
-                    else max(max_row[k], row[k])
-                    for k in max_row
-                }
-            else:
-                max_row = row.copy()
-                max_row.update({"fold": "All folds", "measure": "Max"})
-    rows.append(max_row)
-    return pd.DataFrame(rows)
