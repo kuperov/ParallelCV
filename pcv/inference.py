@@ -762,7 +762,7 @@ def run_cv_sel(
         model_cvses.append(jnp.sqrt(model_cvvar))
         model_se = jnp.sqrt(fold_mcvars @ model_totals + model_cvvar)
         model_ses.append(model_se)
-        model_max_rhat = jnp.max(jnp.reshape(fold_rhats, (2, num_folds)), axis=1)
+        model_max_rhat = jnp.nanmax(jnp.reshape(fold_rhats, (2, num_folds)), axis=1)
         model_max_rhats.append(model_max_rhat)
         # difference statistics (elpd(A) - elpd(B))
         diff, diff_cvse = fold_elpd @ model_diffs, jnp.std(fold_elpd_diffs, ddof=1)
@@ -776,6 +776,12 @@ def run_cv_sel(
             stoprule(diff, diff_cvse, model_mcse, model_ess, num_folds, (i + 1) * batch_size, model_max_rhat)
         )
         stoprules.append(stop)
+        if i % 10 == 0:
+            print(f"Batch {i+1} of {max_batches}.")
+            print(f"    Model A: ELPD = {model_elpdss[-1][0]:.2f} ± {model_ses[-1][0]:.2f}")
+            print(f"    Model B: ELPD = {model_elpdss[-1][1]:.2f} ± {model_ses[-1][1]:.2f}")
+            print(f"    Diff: {diff_elpd[-1]:.2f} ± {diff_ses[-1]:.2f}")
+            print(f"Stopping: {stop}")
         if stop and not ignore_stoprule:
             print(f"Stopping after {i+1} batches")
             break

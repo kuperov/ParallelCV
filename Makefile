@@ -48,7 +48,6 @@ test: .venv
 	python3 -m virtualenv --python=python3 .venv
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install -r requirements/requirements.txt
-	# $(PYTHON) -m pip install -r requirements/requirements-dev.txt
 	$(PYTHON) setup.py develop
 
 pretty:
@@ -58,9 +57,9 @@ pretty:
 lint:
 	# check code formatting (fix with "make pretty")
 	.venv/bin/black --check pcv
-	.venv/bin/isort --profile black --check-only diag
+	.venv/bin/isort --profile black --check-only pcv
 	# check for obvious bugs or code standard violations
-	.venv/bin/flake8 diag
+	.venv/bin/flake8 pcv
 	.venv/bin/pylint pcv  # main code not ready to lint yet
 
 gpu:

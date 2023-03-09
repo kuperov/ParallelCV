@@ -1,3 +1,4 @@
 blackjax @ git+https://github.com/blackjax-devs/blackjax.git@bab42d809b48492f2cbc06471497cefbbf8a90f8
 chex==0.1.6
 tensorflow-probability==0.19.0
+pandas

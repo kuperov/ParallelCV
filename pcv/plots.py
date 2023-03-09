@@ -15,14 +15,14 @@ def plot_model_results(results, title):
     tcrit = tfd.StudentT(df=results['num_folds']+2, loc=0, scale=1.).quantile(0.975)
 
     # mean
-    line_m = p_diff.plot(draws, diff_elpd, linestyle='solid', color='w')
+    line_m = p_diff.plot(draws, diff_elpd, linestyle='solid', color='b')
     # standard error
-    line_se = p_diff.plot(draws, diff_elpd + tcrit*diff_se, linestyle='dashed', color='w')
-    p_diff.plot(draws, diff_elpd - tcrit*diff_se, linestyle='dashed', color='w')
+    line_se = p_diff.plot(draws, diff_elpd + tcrit*diff_se, linestyle='dashed', color='b')
+    p_diff.plot(draws, diff_elpd - tcrit*diff_se, linestyle='dashed', color='b')
     # Monte Carlo standard error
-    line_mcse = p_diff.plot(draws, diff_elpd + 1.96*diff_mcse, linestyle='dotted', color='w')
-    p_diff.plot(draws, diff_elpd - 1.96*diff_mcse, linestyle='dotted', color='w')
-    p_diff.axhline(y=0, color='w', linestyle='solid', linewidth=0.5)
+    line_mcse = p_diff.plot(draws, diff_elpd + 1.96*diff_mcse, linestyle='dotted', color='b')
+    p_diff.plot(draws, diff_elpd - 1.96*diff_mcse, linestyle='dotted', color='b')
+    p_diff.axhline(y=0, color='b', linestyle='solid', linewidth=0.5)
     p_diff.set_title(r'Model $\widehat{elpd}_{CV}$ difference')
     p_diff.set_xlabel('Num. draws (all folds, chains)')
     p_diff.set_ylabel(r'$\widehat{elpd}_{CV}$ difference')
@@ -46,6 +46,8 @@ def plot_model_results(results, title):
     p_rhat.set_title(r'Model fold max $\widehat{R}$')
     p_rhat.legend(handles=plot_handles)
     p_rhat.set_ylabel(r'Model $\widehat{R}$')
+    p_rhat.set_xlim(left=0)
+    p_rhat.set_ylim(bottom=0, top=min(100, jnp.max(model_rhat)))
 
     p_ess.plot(draws, ess, linestyle='solid')
     p_ess.set_title(r'Model $\widehat{ESS}$ by draw')
@@ -60,10 +62,10 @@ def plot_model_results(results, title):
 
     if jnp.sum(results['stop'])>0:
         stop_drawk = draws[results['stop']][0]
-        p_diff.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
-        p_rhat.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
-        p_err.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
-        p_ess.axvline(x=stop_drawk, color='w', linestyle='dashed', linewidth=0.5)
+        p_diff.axvline(x=stop_drawk, color='b', linestyle='dashed', linewidth=0.5)
+        p_rhat.axvline(x=stop_drawk, color='b', linestyle='dashed', linewidth=0.5)
+        p_err.axvline(x=stop_drawk, color='b', linestyle='dashed', linewidth=0.5)
+        p_ess.axvline(x=stop_drawk, color='b', linestyle='dashed', linewidth=0.5)
 
     for rax in axes:
         for ax in rax:
@@ -91,7 +93,7 @@ def plot_fold_results(results, title, show_legend=True):
     p_rhat.set_ylabel(r'Per-fold $\widehat{R}$')
     if show_legend:
         p_rhat.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
-    p_rhat.set_ylim(bottom=1.)
+    p_rhat.set_ylim(bottom=1., top=min(100, jnp.nanmax(results['fold_rhat'])))
 
     fold_diff, fold_mcse = results['fold_elpd_diff'], results['fold_mcse']
     handles = []
@@ -100,7 +102,7 @@ def plot_fold_results(results, title, show_legend=True):
         p_elpds.plot(drawsk, fold_diff[:,k] + tcrit * fold_mcse[:,k], linestyle='dotted', color=line[0].get_color())
         p_elpds.plot(drawsk, fold_diff[:,k] - tcrit * fold_mcse[:,k], linestyle='dotted', color=line[0].get_color())
         handles.append(line[0])
-    p_elpds.axhline(y=0, color='w', linestyle='solid', linewidth=0.5)
+    p_elpds.axhline(y=0, color='b', linestyle='solid', linewidth=0.5)
     p_elpds.set_title(r'$\widehat{elpd}_{CV}$ differences')
     p_elpds.set_ylabel(r'Per-fold $\widehat{elpd}_{CV}$ differences')
     if show_legend:
