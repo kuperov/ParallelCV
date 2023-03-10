@@ -303,7 +303,6 @@ def init_batch_inference_state(
     num_chains: int,
     make_initial_pos: Callable,
     logjoint_density: Callable,
-    log_p: Callable,
     batch_size: int,
     warmup_iter: int,
 ) -> Tuple[ExtendedState, Dict]:
@@ -332,15 +331,6 @@ def init_batch_inference_state(
         num_steps=warmup_iter,
     )
     sampling_keys = jax.random.split(sampling_key, num_chains)
-    # central points for estimating folded rhat
-    theta_center = tree_map(
-        lambda x: jnp.median(x, axis=0), final_warmup_state.position
-    )
-    init_pred = log_p(
-        theta_center
-    )  # initial guess for predictive density (for numerical stability)
-    vec_theta_center = jnp.hstack(jax.tree_util.tree_flatten(theta_center)[0])
-
     # initialize all chains for fold
     def create_state(chain_init_state, chain_rng_key):
         return ExtendedState(
@@ -350,14 +340,7 @@ def init_batch_inference_state(
             pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
             divergences=jnp.array(0),
         )
-
-    states = jax.vmap(
-        create_state,
-        in_axes=(
-            0,
-            0,
-        ),
-    )(final_warmup_state, sampling_keys)
+    states = jax.vmap(create_state, in_axes=(0,0,),)(final_warmup_state, sampling_keys)
     return states, parameters
 
 
@@ -421,6 +404,74 @@ def fold_batched_inference_loop(
     return next_state
 
 
+def full_data_warmup(
+    prng_key: jax.random.KeyArray,
+    logjoint_density: Callable,
+    make_initial_pos: Callable,
+    num_chains: int,
+    batch_size: int,
+    warmup_iter: int,
+    model_id: int,
+    prior_only=False,
+) -> Tuple[ExtendedState, Dict]:
+    def fold_warmup(fold_id, model_id):
+        states, kernel_params = init_batch_inference_state(
+            rng_key=prng_key,
+            num_chains=num_chains,
+            make_initial_pos=make_initial_pos,
+            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id, prior_only),
+            batch_size=batch_size,
+            warmup_iter=warmup_iter,
+        )
+        return states, kernel_params
+    print(f"MEADS warmup for model ({num_chains} chains)...")
+    start_at = time.time()
+    states, kernel_params = fold_warmup(fold_id=-1, model_id=model_id)  # use all data
+    print(f"MEADS warmup took {time.time() - start_at:.2f} seconds")
+    return states, kernel_params
+
+
+def inference(
+    prng_key: jax.random.KeyArray,
+    logjoint_density: Callable,
+    make_initial_pos: Callable,
+    num_chains: int,
+    batch_size: int,
+    warmup_iter: int,
+    num_batches: int,
+):
+    ...
+
+
+def cv_warmup(
+    prng_key: jax.random.KeyArray,
+    logjoint_density: Callable,
+    make_initial_pos: Callable,
+    num_folds: int,
+    num_chains: int,
+    batch_size: int,
+    warmup_iter: int,
+):
+    def fold_warmup(fold_id, model_id):
+        states, kernel_params = init_batch_inference_state(
+            rng_key=prng_key,
+            num_chains=num_chains,
+            make_initial_pos=make_initial_pos,
+            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id, prior_only=False),
+            batch_size=batch_size,
+            warmup_iter=warmup_iter,
+        )
+        return states, kernel_params
+    print(f"MEADS warmup for {num_folds} folds per model ({num_folds*num_chains*2} chains)...")
+    start_at = time.time()
+    # parallel warmup for each fold, initialize mcmc state
+    fold_ids = jnp.tile(jnp.arange(num_folds), 2)
+    model_ids = jnp.repeat(jnp.array([0, 1]), num_folds)
+    states, kernel_params = jax.vmap(fold_warmup)(fold_ids, model_ids)
+    print(f"MEADS warmup took {time.time() - start_at:.2f} seconds")
+    return states, kernel_params
+
+
 def run_cv(
     prng_key: jax.random.KeyArray,
     logjoint_density: Callable,
@@ -465,7 +516,6 @@ def run_cv(
             num_chains=num_chains,
             make_initial_pos=make_initial_pos,
             logjoint_density=logjoint_density_fold,
-            log_p=log_p_fold,
             batch_size=batch_size,
             warmup_iter=warmup_iter,
         )
@@ -549,6 +599,7 @@ def run_cv_sel(
     warmup_iter: int,
     max_batches: int,
     ignore_stoprule: bool = False,
+    prior_only: bool = False
 ):
     """Compute posterior for a single fold using parallel chains.
 
@@ -577,8 +628,7 @@ def run_cv_sel(
             rng_key=prng_key,
             num_chains=num_chains,
             make_initial_pos=make_initial_pos,
-            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id),
-            log_p=lambda theta: log_p(theta, fold_id, model_id),
+            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id, prior_only),
             batch_size=batch_size,
             warmup_iter=warmup_iter,
         )
@@ -589,7 +639,7 @@ def run_cv_sel(
             kernel_parameters=fold_kernel_params,
             batch_size=batch_size,
             ext_states=fold_state,
-            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id),
+            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id, prior_only),
             log_pred=lambda theta: log_p(theta, fold_id, model_id),
         )
         return results
@@ -624,6 +674,7 @@ def run_cv_sel(
     fold_diffs = jnp.vstack([jnp.eye(num_folds), -jnp.eye(num_folds)])
     has_not_stopped = True
     i = 0
+    divergences = jnp.zeros((2*num_folds,))
     for i in range(max_batches):
         fold_drawss.append((i + 1) * batch_size * num_chains)
         states: ExtendedState = jax.vmap(run_batch)(fold_ids, model_ids, kernel_params, states)
@@ -640,7 +691,8 @@ def run_cv_sel(
         fold_elpds.append(fold_elpd)
         fold_elpd_diffs = fold_elpd @ fold_diffs
         fold_elpd_diffss.append(fold_elpd_diffs)
-        fold_divs.append(jnp.sum(states.divergences, axis=(1,)))
+        fold_div_count = jnp.sum(states.divergences, axis=(1,))
+        fold_divs.append(fold_div_count)
         # per-model statistics
         model_elpdss.append(fold_elpd @ model_totals)
         model_ess = fold_ess @ model_totals
@@ -671,6 +723,10 @@ def run_cv_sel(
                 f" A: {model_elpdss[-1][0]:.2f} ±{model_ses[-1][0]:.2f} B: {model_elpdss[-1][1]:.2f} ±{model_ses[-1][1]:.2f}"
                 f" Diff: {diff_elpd[-1]:.2f} ±{diff_ses[-1]:.2f}"
                 + (" stop" if stop else " continue"))
+            div_incr_fold = jnp.sum(fold_div_count > divergences)
+            if div_incr_fold > 0:
+                print(f"     Warning: new divergences in {div_incr_fold}/{2*num_folds} folds")
+                divergences = fold_div_count
         if stop and not ignore_stoprule:
             print(f"Stopping after {i+1} batches")
             break
@@ -705,6 +761,7 @@ def run_cv_sel(
         "num_folds": num_folds,
         "num_chains": num_chains,
         "stop": jnp.stack(stoprules),
+        "states": states
     }
 
 
