@@ -689,7 +689,7 @@ def run_cv_sel(
         fold_elpds.append(fold_elpd)
         fold_elpd_diffs = fold_elpd @ fold_diffs
         fold_elpd_diffss.append(fold_elpd_diffs)
-        fold_diffs.append(states.divergences)
+        fold_divs.append(jnp.sum(states.divergences, axis=(1,)))
         # per-model statistics
         model_elpdss.append(fold_elpd @ model_totals)
         model_ess = fold_ess @ model_totals
@@ -732,7 +732,7 @@ def run_cv_sel(
     iter = num_folds * num_chains * 2 * batch_size * (i + 1)
     total_sec = time.time() - start_at
     min, sec = int(total_sec) // 60, total_sec % 60
-    print(f"Drew {iter} samples in {min:.0f} min {sec:.0f} sec ({iter/total_sec:.0f} i/s)")
+    print(f"Drew {iter} samples in {min:.0f} min {sec:.0f} sec ({iter/total_sec:.0f} per sec)")
     return {
         "fold_ess": jnp.stack(fold_esss),
         "fold_rhat": jnp.stack(fold_rhatss),

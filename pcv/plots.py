@@ -99,7 +99,7 @@ def plot_fold_results(results, title, show_legend=True):
     if show_legend:
         p_elpds.legend(handles=handles, ncol=2)
 
-    divs = results['divergences']
+    divs = results['fold_divergences']
     handles = []
     for k in range(K):
         line = p_divs.plot(drawsk, divs, linestyle='solid')
