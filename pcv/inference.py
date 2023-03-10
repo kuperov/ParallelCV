@@ -159,55 +159,6 @@ def tree_concat(trees):
     return tree_map(lambda *xs: jnp.concatenate(xs, axis=0), *trees)
 
 
-class SigmoidParam(NamedTuple):
-    mean: jax.Array
-    std: jax.Array
-
-
-def sigmoid_transform_param(state: WelfordState, axis: int = 0) -> SigmoidParam:
-    """Return sigmoid transform parameters estimated from welford state.
-
-    This method combines multiple means and variances by averaging over the specified axis.
-    For now it is just the mean and sd but it could change.
-
-    Params:
-        state: Welford state with leaves in the shape of (num_chains, param_dim1, ...)
-        axis: axis to average over (default 0)
-
-    Returns:
-        A callable that takes a (possibly vector) input and returns it transformed to [0, 1]
-    """
-    mean = welford_mean(state).mean(axis=axis)
-    std = jnp.sqrt(welford_var(state).mean(axis=axis))
-    return SigmoidParam(mean=mean, std=std)
-
-
-def apply_sigmoid(param: SigmoidParam, x: jax.Array) -> jax.Array:
-    """Apply sigmoid transform to input.
-
-    Shape of param and x should match.
-
-    Params:
-        param: SigmoidParam
-        x: input to transform
-    """
-    return stats.norm.cdf(x, loc=param.mean, scale=param.std)
-
-
-def apply_sigmoid_tree(param: PyTree, x: PyTree) -> PyTree:
-    """Apply sigmoid transform to input.
-
-    Shape of param and x should match.
-
-    Params:
-        param: PyTree of SigmoidParams
-        x: PyTree of arrays, input to transform
-    """
-    return tree_map(
-        apply_sigmoid, param, x, is_leaf=lambda x: isinstance(x, SigmoidParam)
-    )
-
-
 def inference_loop(
     rng_key, kernel, initial_state, num_samples, log_pred, theta_center, online=True
 ) -> Tuple[ExtendedState, ExtendedState]:
@@ -715,8 +666,8 @@ def run_cv_sel(
             stoprule(diff, diff_cvse, model_mcse, model_ess, num_folds, (i + 1) * batch_size, model_max_rhat)
         )
         stoprules.append(stop)
-        if i % 10 == 0:
-            print(f"{i+1: 4d}. "
+        if i > 0 and i % 10 == 0:
+            print(f"{i: 4d}. "
                 f" A: {model_elpdss[-1][0]:.2f} ±{model_ses[-1][0]:.2f} B: {model_elpdss[-1][1]:.2f} ±{model_ses[-1][1]:.2f}"
                 f" Diff: {diff_elpd[-1]:.2f} ±{diff_ses[-1]:.2f}"
                 + (" stop" if stop else " continue"))

@@ -9,7 +9,8 @@ tfd = tfp.distributions
 def plot_model_results(results, title):
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(10, 6))
     ((p_diff, p_rhat), (p_ess, p_err)) = axes
-    draws, ess = results['fold_draws'] * 5e-3, results['model_ess'] * 5e-3
+    K = results['num_folds']
+    draws, ess = results['fold_draws'] * 1e-3 * K, results['model_ess'] * 1e-3 * K
     diff_elpd, diff_se = results['diff_elpd'], results['diff_se']
     diff_mcse, diff_cvse = results['diff_mcse'], results['diff_cvse']
     tcrit = tfd.StudentT(df=results['num_folds']+2, loc=0, scale=1.).quantile(0.975)
@@ -100,13 +101,13 @@ def plot_fold_results(results, title, show_legend=True):
         p_elpds.legend(handles=handles, ncol=2)
 
     divs = results['fold_divergences']
-    handles = []
     for k in range(K):
-        line = p_divs.plot(drawsk, divs, linestyle='solid')
+        p_divs.plot(drawsk, divs[:,k], linestyle='solid')
     p_divs.set_title('Divergences')
 
-    for ax in axes.ravel():
-        ax.set_xlabel("Draws per fold ('000; total of all chains)")
+    for rax in axes:
+        for ax in rax:
+            ax.set_xlabel("Draws per fold ('000; total of all chains)")
 
     fig.suptitle(title)
 

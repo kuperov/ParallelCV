@@ -1,9 +1,11 @@
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
+from typing import Callable
 
 tfd = tfp.distributions
 
-def make_positive_rule(num_folds, level=0.95):
+
+def make_positive_rule(num_folds: int, level=0.95) -> Callable:
     qtile = 1. - 0.5*(1-level)
     pos_tcrit = tfd.StudentT(df=num_folds+2, loc=0., scale=1.).quantile(qtile)
     def rule(elpd_diff, diff_cvse, model_mcse, model_ess, num_folds, num_samples, model_rhats):
@@ -12,7 +14,8 @@ def make_positive_rule(num_folds, level=0.95):
         return prereq and pos
     return rule
 
-def make_positive_negative_rule(num_folds, level=0.95):
+
+def make_positive_negative_rule(num_folds: int, level=0.95) -> Callable:
     qtile = 1. - 0.5*(1-level)
     pos_tcrit = tfd.StudentT(df=num_folds+2, loc=0., scale=1.).quantile(qtile)
     neg_tcrit = tfd.StudentT(df=num_folds, loc=0., scale=1.).quantile(qtile)

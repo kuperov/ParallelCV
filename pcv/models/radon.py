@@ -72,7 +72,7 @@ def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
     sigma_a_tfm = tfb.Exp()
     sigma_y_tfm = tfb.Exp()
 
-    J, N = data['J'], data['J']
+    J = data['J']
     county_idx = data['county_idx'] - 1
     y, log_uppm, floor_measure = data['log_radon'], data['log_uppm'], data['floor_measure']
 
@@ -87,26 +87,31 @@ def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
         )
         return theta
 
-    def logjoint_density(theta: Theta, fold_id: int, model_id: int) -> jax.Array:
+    def logjoint_density(theta: Theta, fold_id: int, model_id: int, prior_only: bool = False) -> jax.Array:
         """Log joint density for a given fold.
         
         Args:
-        theta: model parameters
-        fold_id: zero-based fold id for training set
-        model_id: 0 for model A, 1 for model B
+            theta: model parameters
+            fold_id: zero-based fold id for training set
+            model_id: 0 for model A, 1 for model B
+            prior_only: if True, only return prior density
+        
+        Returns:
+            log density
         """
         # transform to constrained space
         sigma_alpha = sigma_a_tfm.forward(theta.sigma_alpha)
         sigma_y = sigma_y_tfm.forward(theta.sigma_y)
         sigma_alpha_ldj = sigma_a_tfm.forward_log_det_jacobian(theta.sigma_alpha)
         sigma_y_ldj = sigma_y_tfm.forward_log_det_jacobian(theta.sigma_y)
+        ldj = sigma_y_ldj + sigma_alpha_ldj
         # prior is same for all folds
         lp = (
-            tfd.Normal(loc=0, scale=1).log_prob(sigma_alpha)
-            + tfd.Normal(loc=0, scale=1).log_prob(sigma_y)
-            + tfd.Normal(loc=0, scale=10).log_prob(theta.mu_alpha)
-            + tfd.Normal(loc=0, scale=10).log_prob(theta.beta).sum()
-            + tfd.Normal(loc=0, scale=1).log_prob(theta.alpha_raw).sum()
+            tfd.Normal(loc=0, scale=0.5).log_prob(sigma_alpha)
+            + tfd.Normal(loc=0, scale=0.5).log_prob(sigma_y)
+            + tfd.Normal(loc=0, scale=2).log_prob(theta.mu_alpha)
+            + tfd.Normal(loc=0, scale=2).log_prob(theta.beta).sum()
+            + tfd.Normal(loc=0, scale=0.5).log_prob(theta.alpha_raw).sum()
         )
         # noncentering transform: alpha ~ normal(mu_alpha, sigma_alpha)
         alpha = theta.mu_alpha + sigma_alpha * theta.alpha_raw
@@ -116,8 +121,8 @@ def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
         mu = muj + floor_measure * theta.beta[1]
         ll_contribs = tfd.Normal(loc=mu, scale=sigma_y).log_prob(y)
         fold_mask = (county_idx != fold_id).astype(jnp.float32)
-        ll = (fold_mask * ll_contribs).sum()
-        return lp + ll + sigma_alpha_ldj + sigma_y_ldj
+        ll = (fold_mask * ll_contribs).sum() * (not prior_only)
+        return lp + ll + ldj
 
     def log_pred(theta: Theta, fold_id: int, model_id: int) -> jax.Array:
         """Log predictive density for a given fold.
