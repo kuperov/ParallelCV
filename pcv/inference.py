@@ -65,39 +65,32 @@ def run_meads(
                 adaptation_state.alpha,
                 adaptation_state.delta,
             )
-
         keys = jax.random.split(rng_key, num_chains)
         new_states, info = jax.vmap(kernel)(keys, states)
         new_adaptation_state = update(
             adaptation_state, new_states.position, new_states.potential_energy_grad
         )
-
         return (new_states, new_adaptation_state), None
 
     key_init, key_adapt = jax.random.split(prng_key)
-
     rng_keys = jax.random.split(key_init, num_chains)
     init_states = batch_init(rng_keys, positions)
     init_adaptation_state = init(positions, init_states.potential_energy_grad)
-
     keys = jax.random.split(key_adapt, num_steps)
     (last_states, last_adaptation_state), _ = jax.lax.scan(
         one_step_online, (init_states, init_adaptation_state), keys
     )
-
     parameters = {
         "step_size": last_adaptation_state.step_size,
         "momentum_inverse_scale": last_adaptation_state.position_sigma,
         "alpha": last_adaptation_state.alpha,
         "delta": last_adaptation_state.delta,
     }
-
     return last_states, parameters
 
 
 class ExtendedState(NamedTuple):
     """MCMC state--extends regular GHMC state variable--also includes batch welford accumulators"""
-
     state: GHMCState  # current HMC state
     rng_key: jax.random.KeyArray  # current random seed
     pred_ws: LogWelfordState  # accumulator for log predictive
@@ -668,7 +661,7 @@ def run_cv_sel(
     # use python flow control for now but jax can actually do this too
     # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
     # TODO: run a batch to get a better k estimate, then discard it
-    fold_drawss, fold_esss, fold_rhatss, fold_elpds, fold_mcses, fold_elpd_diffss = [],[],[],[],[],[]
+    fold_drawss, fold_esss, fold_rhatss, fold_elpds, fold_mcses, fold_elpd_diffss, fold_divs = [],[],[],[],[],[],[]
     diff_mcses, diff_elpd, diff_cvses, diff_ses = [],[],[],[]
     model_esss, model_elpdss, model_mcses, model_cvses, model_ses, model_max_rhats = [],[],[],[],[],[]
     stoprules = []
@@ -682,7 +675,7 @@ def run_cv_sel(
     i = 0
     for i in range(max_batches):
         fold_drawss.append((i + 1) * batch_size * num_chains)
-        states = jax.vmap(run_batch)(fold_ids, model_ids, kernel_params, states)
+        states: ExtendedState = jax.vmap(run_batch)(fold_ids, model_ids, kernel_params, states)
         fold_ess = pred_ess_folds(states)
         # per-fold statistics
         fold_esss.append(fold_ess)
@@ -696,6 +689,7 @@ def run_cv_sel(
         fold_elpds.append(fold_elpd)
         fold_elpd_diffs = fold_elpd @ fold_diffs
         fold_elpd_diffss.append(fold_elpd_diffs)
+        fold_diffs.append(states.divergences)
         # per-model statistics
         model_elpdss.append(fold_elpd @ model_totals)
         model_ess = fold_ess @ model_totals
@@ -746,6 +740,7 @@ def run_cv_sel(
         "fold_draws": jnp.stack(fold_drawss),
         "fold_mcse": jnp.stack(fold_mcses),
         "fold_elpd_diff": jnp.stack(fold_elpd_diffss),
+        "fold_divergences": jnp.stack(fold_divs),
         "model_ess": jnp.stack(model_esss),
         "model_elpd": jnp.stack(model_elpdss),
         "model_mcse": jnp.stack(model_mcses),
