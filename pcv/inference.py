@@ -404,43 +404,92 @@ def fold_batched_inference_loop(
     return next_state
 
 
-def full_data_warmup(
-    prng_key: jax.random.KeyArray,
-    logjoint_density: Callable,
-    make_initial_pos: Callable,
-    num_chains: int,
-    batch_size: int,
-    warmup_iter: int,
-    model_id: int,
-    prior_only=False,
-) -> Tuple[ExtendedState, Dict]:
-    def fold_warmup(fold_id, model_id):
-        states, kernel_params = init_batch_inference_state(
-            rng_key=prng_key,
-            num_chains=num_chains,
-            make_initial_pos=make_initial_pos,
-            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id, prior_only),
-            batch_size=batch_size,
-            warmup_iter=warmup_iter,
-        )
-        return states, kernel_params
-    print(f"MEADS warmup for model ({num_chains} chains)...")
-    start_at = time.time()
-    states, kernel_params = fold_warmup(fold_id=-1, model_id=model_id)  # use all data
-    print(f"MEADS warmup took {time.time() - start_at:.2f} seconds")
-    return states, kernel_params
-
-
 def inference(
     prng_key: jax.random.KeyArray,
     logjoint_density: Callable,
+    log_p: Callable,
     make_initial_pos: Callable,
     num_chains: int,
     batch_size: int,
     warmup_iter: int,
     num_batches: int,
 ):
-    ...
+    """Compute posterior for a single fold using parallel chains.
+
+    Scope: one chain, one fold.
+
+    This function is the building block for parallel CV.
+
+    Args:
+        prng_key: jax.random.PRNGKey, random number generator state
+        logjoint_density: callable, log joint density function, signature (theta, fold_id)
+        log_p: callable, log density, signature (theta, fold_id)
+        make_initial_pos: callable, function to make initial position for each chain
+        num_chains: int, number of chains to run
+        warmup_iter: int, number of warmup iterations to run
+        online: bool (default True) if true, don't retain the MCMC trace
+        num_batches: num batches
+
+    Returns:
+        2-tuple of:
+            ExtendedState, final state of the inference loop
+    """
+
+    print(f"Warmup: {warmup_iter} iterations, {num_chains} chains per fold...")
+    # parallel warmup for each fold, initialize mcmc state
+    states, kernel_params = init_batch_inference_state(
+            rng_key=prng_key,
+            num_chains=num_chains,
+            make_initial_pos=make_initial_pos,
+            logjoint_density=lambda theta: logjoint_density(theta, -1),
+            batch_size=batch_size,
+            warmup_iter=warmup_iter,
+        )
+    print(f"Running {num_batches} batches of {batch_size} iterations on {num_chains} chains...")
+    # use python flow control for now but jax can actually do this too
+    # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
+    esss, rhatss, elpdss, drawss = [], [], [], []
+    mcses = []
+    for i in range(num_batches):
+        states = fold_batched_inference_loop(
+            kernel_parameters=kernel_params,
+            batch_size=batch_size,
+            ext_states=states,
+            logjoint_density=lambda theta: logjoint_density(theta, -1),
+            log_pred=lambda theta: log_p(theta, -1),
+        )
+        ess = pred_ess_folds(states)
+        esss.append(ess)
+        rhats = rhat_log(states.pred_ws)
+        rhatss.append(rhats)
+        elpd_contribs = log_welford_mean(states.pred_ws)
+        elpd = logmean(elpd_contribs, axis=1)
+        elpdss.append(elpd)
+        drawss.append((i + 1) * batch_size * num_chains)
+        log_mcvar = log_welford_log_var_combine(states.pred_bws.batches, ddof=1)
+        mcses.append(jnp.exp(0.5 * log_mcvar))
+        print(f"Batch {i+1}: {jnp.sum(ess)} total ess")
+    else:
+        print(f"Warning: max batches ({num_batches}) reached")
+    ess, rhats = jnp.stack(esss), jnp.stack(rhatss)
+    elpds, draws = jnp.stack(elpdss), jnp.stack(drawss),
+    mcse = jnp.stack(mcses)
+    total_elpd = jnp.sum(elpds, axis=1)
+    total_mcse = jnp.sqrt(jnp.sum(mcse**2, axis=1))
+    elpd_var = jnp.var(elpds, axis=1)
+    total_cvse = jnp.sqrt(elpd_var)
+    total_se = jnp.sqrt(total_mcse**2 + elpd_var)
+    return {
+        "ess": ess,
+        "rhat": rhats,
+        "elpd": elpds,
+        "draws": draws,
+        "mcse": mcse,
+        "total_elpd": total_elpd,
+        "total_mcse": total_mcse,
+        "total_cvse": total_cvse,
+        "total_se": total_se,
+    }
 
 
 def cv_warmup(
@@ -495,8 +544,10 @@ def run_cv(
         log_p: callable, log density, signature (theta, fold_id)
         make_initial_pos: callable, function to make initial position for each chain
         num_chains: int, number of chains to run
+        batch_size: int, iterations per batch
         warmup_iter: int, number of warmup iterations to run
         online: bool (default True) if true, don't retain the MCMC trace
+        max_batches: int, maximum number of batches to run
 
     Returns:
         2-tuple of:
@@ -504,39 +555,23 @@ def run_cv(
     """
 
     def fold_warmup(fold_id):
-        # curry logjoint_density to fix fold_id
-        def logjoint_density_fold(theta):
-            return logjoint_density(theta, fold_id)
-
-        def log_p_fold(theta):
-            return log_p(theta, fold_id)
-
-        states, kernel_params = init_batch_inference_state(
+        return init_batch_inference_state(
             rng_key=prng_key,
             num_chains=num_chains,
             make_initial_pos=make_initial_pos,
-            logjoint_density=logjoint_density_fold,
+            logjoint_density=lambda theta: logjoint_density(theta, fold_id),
             batch_size=batch_size,
             warmup_iter=warmup_iter,
         )
-        return states, kernel_params
 
     def run_batch(fold_id, fold_kernel_params, fold_state):
-        # curry fold_id
-        def logjoint_density_fold(theta):
-            return logjoint_density(theta, fold_id)
-
-        def log_p_fold(theta):
-            return log_p(theta, fold_id)
-
-        results = fold_batched_inference_loop(
+        return fold_batched_inference_loop(
             kernel_parameters=fold_kernel_params,
             batch_size=batch_size,
             ext_states=fold_state,
-            logjoint_density=logjoint_density_fold,
-            log_pred=log_p_fold,
+            logjoint_density=lambda theta: logjoint_density(theta, fold_id),
+            log_pred=lambda theta: log_p(theta, fold_id),
         )
-        return results
 
     print(f"Warmup: {warmup_iter} iterations, {num_folds} folds at {num_chains} chains per fold...")
     # parallel warmup for each fold, initialize mcmc state
@@ -615,8 +650,11 @@ def run_cv_sel(
         make_initial_pos: callable, function to make initial position for each chain
         stoprule: callable, function to determine if inference should stop
         num_chains: int, number of chains to run
+        batch_size: int, number of iterations to run per batch
         warmup_iter: int, number of warmup iterations to run
+        max_batches: int, maximum number of batches to run
         ignore_stoprule: (bool) if true, ignore the stoprule and run for max_batches
+        prior_only: (bool) if true, only compute the prior
 
     Returns:
         2-tuple of:
@@ -683,9 +721,7 @@ def run_cv_sel(
         fold_esss.append(fold_ess)
         fold_rhats = rhat_log(states.pred_ws)
         fold_rhatss.append(fold_rhats)
-        fold_mcvars = jnp.exp(
-            log_welford_log_var_combine(states.pred_bws.batches, ddof=1)
-        )
+        fold_mcvars = jnp.exp(log_welford_log_var_combine(states.pred_bws.batches, ddof=1))
         fold_mcses.append(jnp.sqrt(fold_mcvars))
         fold_elpd = logmean(log_welford_mean(states.pred_ws), axis=1)
         fold_elpds.append(fold_elpd)

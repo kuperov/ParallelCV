@@ -107,11 +107,11 @@ def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
         ldj = sigma_y_ldj + sigma_alpha_ldj
         # prior is same for all folds
         lp = (
-            tfd.Normal(loc=0, scale=0.5).log_prob(sigma_alpha)
-            + tfd.Normal(loc=0, scale=0.5).log_prob(sigma_y)
-            + tfd.Normal(loc=0, scale=2).log_prob(theta.mu_alpha)
-            + tfd.Normal(loc=0, scale=2).log_prob(theta.beta).sum()
-            + tfd.Normal(loc=0, scale=0.5).log_prob(theta.alpha_raw).sum()
+            tfd.Normal(loc=0, scale=1.).log_prob(sigma_alpha)
+            + tfd.Normal(loc=0, scale=1.).log_prob(sigma_y)
+            + tfd.Normal(loc=0, scale=10.).log_prob(theta.mu_alpha)
+            + tfd.Normal(loc=0, scale=10.).log_prob(theta.beta).sum()
+            + tfd.Normal(loc=0, scale=1.).log_prob(theta.alpha_raw).sum()
         )
         # noncentering transform: alpha ~ normal(mu_alpha, sigma_alpha)
         alpha = theta.mu_alpha + sigma_alpha * theta.alpha_raw
