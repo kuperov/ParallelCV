@@ -168,6 +168,18 @@ class FoldWarmupResults(NamedTuple):
     fold_states: GHMCState
     fold_parameters: Dict
 
+    @property
+    def num_chains(self):
+        return self.model_states.position.shape[1]
+
+    @property
+    def num_models(self):
+        return len(self.model_parameters['alpha'])
+    
+    @property
+    def num_folds(self):
+        return len(self.fold_parameters['alpha'])
+
     def plot_dist(self):
         import matplotlib.pyplot as plt
         num_models = len(self.fold_parameters['alpha'])
@@ -583,7 +595,6 @@ def inference(
     }
 
 
-
 def fold_adaptation(
     prng_key: jax.random.KeyArray,
     logjoint_density: Callable,
@@ -593,7 +604,7 @@ def fold_adaptation(
     num_chains: int,
     model_warmup_iter: int,
     fold_warmup_iter: int
-):
+) -> FoldWarmupResults:
     """Adaptation procedure for full-data model(s) and all CV folds.
 
     Runs MEADS adaptation procedure for full-data model(s), followed by MEADS
@@ -618,11 +629,8 @@ def fold_adaptation(
         num_chains: int, number of chains to run
         batch_size: int, number of iterations per batch
         warmup_iter: int, number of warmup iterations to run
-
-    Returns:
-        Dict of:
     """
-    init_key, warmup_key, sampling_key = jax.random.split(prng_key, 3)
+    init_key, model_warmup_key, fold_warmup_key = jax.random.split(prng_key, 3)
     step_fn = ghmc.kernel()
     init_a_s, update_a_s = adaptation.meads.base()
 
@@ -658,10 +666,10 @@ def fold_adaptation(
             )
             return (new_states, new_adaptation_state), None  # None means online adaptation
 
-        key_init, key_adapt = jax.random.split(prng_key)
-        rng_keys = jax.random.split(key_init, num_chains)
+        key_init, key_adapt = jax.random.split(model_warmup_key)
+        init_state_keys = jax.random.split(key_init, num_chains)
         init_positions = jax.vmap(make_initial_pos)(jax.random.split(init_key, num_chains))
-        init_states: GHMCState = jax.vmap(lambda r, p: ghmc.init(r, p, model_density))(rng_keys, init_positions)
+        init_states: GHMCState = jax.vmap(lambda r, p: ghmc.init(r, p, model_density))(init_state_keys, init_positions)
         init_adaptation_state: MEADSAdaptationState = init_a_s(init_positions, init_states.potential_energy_grad)
         # run adaptation
         (last_states, last_adaptation_state), _ = jax.lax.scan(
@@ -677,7 +685,6 @@ def fold_adaptation(
         f"Alpha: {model_adaptation_states.alpha} "
         f"Delta: {model_adaptation_states.delta}")
 
-    init_chain_keys = jax.random.split(init_key, num_chains)
     def model_folds_warmup(warmup_state, adaptation_state, model_id):
         # warmup for all folds of a single model
         def fold_warmup(fold_id):
@@ -708,7 +715,7 @@ def fold_adaptation(
                 )
                 return (new_states, new_adaptation_state), None
 
-            keys = jax.random.split(prng_key, fold_warmup_iter)
+            keys = jax.random.split(fold_warmup_key, fold_warmup_iter)
             (last_states, last_adaptation_state), _ = jax.lax.scan(
                 one_step_online, (warmup_state, adaptation_state), keys
             )
@@ -721,7 +728,9 @@ def fold_adaptation(
     start_at = time.time()
     warmup_states, warmup_parameters = jax.vmap(model_folds_warmup)(
         model_warmup_states, model_adaptation_states, jnp.arange(num_models))
-    print(f"MEADS warmup took {time.time() - start_at:.2f} seconds")
+    total_sec = time.time() - start_at
+    min, sec = int(total_sec) // 60, total_sec % 60
+    print(f"MEADS warmup took {min} min {sec:.1f} sec")
     model_parameters = to_params(model_adaptation_states)
     return FoldWarmupResults(
         model_states=model_warmup_states,
@@ -835,12 +844,9 @@ def run_cv_sel(
     prng_key: jax.random.KeyArray,
     logjoint_density: Callable,
     log_p: Callable,
-    num_folds: int,
-    make_initial_pos: Callable,
     stoprule: Callable,
-    num_chains: int,
+    warmup_results: FoldWarmupResults,
     batch_size: int,
-    warmup_iter: int,
     max_batches: int,
     ignore_stoprule: bool = False,
     prior_only: bool = False
@@ -870,17 +876,6 @@ def run_cv_sel(
             ExtendedState, final state of the inference loop
     """
 
-    def fold_warmup(fold_id, model_id):
-        states, kernel_params = init_batch_inference_state(
-            rng_key=prng_key,
-            num_chains=num_chains,
-            make_initial_pos=make_initial_pos,
-            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id, prior_only),
-            batch_size=batch_size,
-            warmup_iter=warmup_iter,
-        )
-        return states, kernel_params
-
     def run_batch(fold_id, model_id, fold_kernel_params, fold_state):
         results = fold_batched_inference_loop(
             kernel_parameters=fold_kernel_params,
@@ -891,17 +886,7 @@ def run_cv_sel(
         )
         return results
 
-    print(
-        f"MEADS warmup for {num_folds} folds per model ({num_folds*num_chains*2} chains)..."
-    )
-    start_at = time.time()
-    # parallel warmup for each fold, initialize mcmc state
-    fold_ids = jnp.tile(jnp.arange(num_folds), 2)
-    model_ids = jnp.repeat(jnp.array([0, 1]), num_folds)
-    states, kernel_params = jax.vmap(fold_warmup)(fold_ids, model_ids)
-    print(
-        f"Completed {num_folds*num_chains*2*warmup_iter} warmup iterations in {time.time() - start_at:.0f} seconds"
-    )
+    num_folds, num_chains = warmup_results.num_folds, warmup_results.num_chains
     print(
         f"Starting cross-validation with {num_folds*num_chains*2} parallel GHMC chains..."
     )
@@ -970,7 +955,7 @@ def run_cv_sel(
                 + (" stop" if stop else " continue"))
             div_incr_fold = jnp.sum(fold_div_count > divergences)
             if div_incr_fold > 0:
-                print(f"     Warning: new divergences in {div_incr_fold}/{2*num_folds} folds")
+                print(f"       Warning: new divergences in {div_incr_fold}/{2*num_folds} folds")
                 divergences = fold_div_count
         if stop and not ignore_stoprule:
             print(f"Stopping after {i+1} batches")
