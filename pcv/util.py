@@ -1,8 +1,17 @@
 import jax
-# import arviz as az
-import jax
+from jax import tree_map
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
+
+
+# stack arrays in pytrees
+def tree_stack(trees):
+    return tree_map(lambda *xs: jnp.stack(xs, axis=0), *trees)
+
+
+# stack arrays in pytrees
+def tree_concat(trees):
+    return tree_map(lambda *xs: jnp.concatenate(xs, axis=0), *trees)
 
 
 def logvar(logx, axis=0, ddof=0):
@@ -30,17 +39,3 @@ def print_devices():
         print(f'Detected devices: {", ".join(device_list)}')
     else:
         print("Only CPU is available. Check cuda/cudnn library versions.")
-
-
-# def to_arviz(theta, post_id: int) -> az.InferenceData:
-#     """Export a chain of draws to Arviz for visualization, etc.
-
-#     Args:
-#         theta: pytreee of draws
-#         post_id: zero-based posterior id
-#     """
-#     pos = tree_map(lambda x: x[post_id, ...], theta)
-#     theta_dict = az.convert_to_inference_data(
-#         dict(beta=pos.beta, sigsq=jax.vmap(sigsq_t.forward)(pos.sigsq))
-#     )
-#     return az.convert_to_inference_data(theta_dict)

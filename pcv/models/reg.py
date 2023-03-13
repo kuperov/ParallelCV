@@ -2,10 +2,12 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
+from pcv.model import Model
 
 tfd = tfp.distributions
 tfb = tfp.bijectors
 tfpk = tfp.math.psd_kernels
+
 
 class Theta(NamedTuple):
     beta: jax.Array
@@ -25,12 +27,12 @@ def generate(
     return y, X
 
 
-def get_model(y, X, K=5):
+def get_model(y, X, K=5) -> Model:
     N, p = X.shape
     # use exp to transform sigsq to unconstrained space
     sigsq_t = tfb.Exp()
 
-    beta_prior = tfd.MultivariateNormalDiag(loc=jnp.zeros(p), scale_diag=jnp.ones(p))
+    beta_prior = tfd.MultivariateNormalDiag(loc=jnp.zeros(p), scale_diag=10*jnp.ones(p))
     sigsq_prior = tfd.Gamma(concentration=1.0, rate=1.0)
 
     def logjoint_density(theta: Theta, fold_id: int, model_id: int, prior_only: bool = False) -> jax.Array:
@@ -75,4 +77,17 @@ def get_model(y, X, K=5):
             sigsq=jax.random.normal(key=k2))
         return theta
 
-    return logjoint_density, log_pred, make_initial_pos
+    def to_constrained(theta: Theta) -> Theta:
+        return Theta(
+            beta=theta.beta,
+            sigsq=sigsq_t.forward(theta.sigsq)
+        )
+
+    return Model(
+        num_folds=K,
+        num_models=2,
+        logjoint_density=logjoint_density,
+        log_pred=log_pred,
+        make_initial_pos=make_initial_pos,
+        to_constrained=to_constrained
+    )

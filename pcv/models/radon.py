@@ -6,6 +6,8 @@ import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
 from typing import NamedTuple, Dict, Callable, Tuple
+from pcv.model import Model
+
 
 tfd = tfp.distributions
 tfb = tfp.bijectors
@@ -67,7 +69,7 @@ def get_data():
     return {k: jnp.array(v) for (k, v) in raw_data.items()}
 
 
-def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
+def get_model(data: Dict) -> Model:
 
     sigma_a_tfm = tfb.Exp()
     sigma_y_tfm = tfb.Exp()
@@ -144,4 +146,20 @@ def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
         lpred = (fold_mask * ll_contribs).sum()
         return lpred
 
-    return make_initial_pos, log_pred, logjoint_density
+    def to_constrained(theta: Theta) -> Theta:
+        return Theta(
+            alpha_raw=theta.alpha_raw,
+            beta=theta.beta,
+            mu_alpha=theta.mu_alpha,
+            sigma_alpha=sigma_a_tfm.forward(theta.sigma_alpha),
+            sigma_y=sigma_y_tfm.forward(theta.sigma_y),
+        )
+
+    return Model(
+        num_folds=J,
+        num_models=2,
+        logjoint_density=logjoint_density,
+        log_pred=log_pred,
+        make_initial_pos=make_initial_pos,
+        to_constrained=to_constrained
+    )

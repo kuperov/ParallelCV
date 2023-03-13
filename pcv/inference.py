@@ -19,6 +19,9 @@ from .welford import *
 from pcv.util import logmean, logvar
 from blackjax.adaptation.meads import MEADSAdaptationState
 
+from pcv.util import tree_stack, tree_concat
+from pcv.model import Model
+
 
 def run_meads(
     logjoint_density_fn: Callable,
@@ -162,31 +165,34 @@ def rerun_meads(
     return last_states, parameters
 
 
+class ModelWarmupResults(NamedTuple):
+    """Warmup results for full-data model."""
+    num_chains: int
+    num_models: int
+    num_iter: int
+    states: GHMCState
+    parameters: Dict
+
+
 class FoldWarmupResults(NamedTuple):
+    """Warmup results for a multi-model CV procedure."""
+    num_chains: int
+    num_models: int
+    num_folds: int
+    model_warmup_iter: int
     model_states: GHMCState
     model_parameters: Dict
+    fold_warmup_iter: int
     fold_states: GHMCState
     fold_parameters: Dict
 
-    @property
-    def num_chains(self):
-        return self.model_states.position.shape[1]
-
-    @property
-    def num_models(self):
-        return len(self.model_parameters['alpha'])
-    
-    @property
-    def num_folds(self):
-        return len(self.fold_parameters['alpha'])
-
     def plot_dist(self):
         import matplotlib.pyplot as plt
-        num_models = len(self.fold_parameters['alpha'])
         fig, axes = plt.subplots(3, 2, figsize=(12, 8))
-        for m in range(num_models):
+        for m in range(self.num_models):
+            model_fold_idxs = jnp.arange(m*self.num_folds, (m+1)*self.num_folds)
             for i, key in enumerate(['step_size', 'alpha', 'delta']):
-                axes[i][m].hist(self.fold_parameters[key][m])
+                axes[i][m].hist(self.fold_parameters[key][model_fold_idxs])
                 axes[i][m].axvline(self.model_parameters[key][m])
                 axes[i][m].set_title(f"Model {m} {key}")
         fig.tight_layout()
@@ -252,16 +258,6 @@ def pred_ess_folds(extended_state: ExtendedState):
     return ns * jnp.exp(log_Sigmas - log_Lambdas)
 
 
-# stack arrays in pytrees
-def tree_stack(trees):
-    return tree_map(lambda *xs: jnp.stack(xs, axis=0), *trees)
-
-
-# stack arrays in pytrees
-def tree_concat(trees):
-    return tree_map(lambda *xs: jnp.concatenate(xs, axis=0), *trees)
-
-
 def inference_loop(
     rng_key, kernel, initial_state, num_samples, log_pred, theta_center, online=True
 ) -> Tuple[ExtendedState, ExtendedState]:
@@ -295,7 +291,6 @@ def inference_loop(
     batch_size: int = int(
         jnp.floor(num_samples**0.5)
     )  # batch size for computing batch mean, variance
-    vec_theta_center = jnp.hstack(jax.tree_util.tree_flatten(theta_center)[0])
 
     def one_mcmc_step(ext_state: ExtendedState, _idx):
         i_key, carry_key = jax.random.split(ext_state.rng_key)
@@ -318,16 +313,6 @@ def inference_loop(
         else:
             return carry_state, chain_state
 
-    def remove_init_pred(state):
-        # remove initial guess for predictive density
-        return ExtendedState(
-            state=state.state,
-            rng_key=state.rng_key,
-            pred_ws=state.pred_ws,
-            pred_bws=state.pred_bws,
-            divergences=state.divergences,
-        )
-
     init_state = ExtendedState(
         state=initial_state,
         rng_key=rng_key,
@@ -336,7 +321,6 @@ def inference_loop(
         divergences=jnp.array(0),
     )
     state, trace = jax.lax.scan(one_mcmc_step, init_state, jnp.arange(0, num_samples))
-    state = remove_init_pred(state)
     return state, trace
 
 
@@ -509,24 +493,21 @@ def fold_batched_inference_loop(
 
 def inference(
     prng_key: jax.random.KeyArray,
-    logjoint_density: Callable,
-    log_p: Callable,
-    make_initial_pos: Callable,
+    model: Model,
+    model_id: int,
     num_chains: int,
-    batch_size: int,
+    num_samples: int,
     warmup_iter: int,
-    num_batches: int,
+    prior_only: bool = False,
 ):
     """Compute posterior for a single fold using parallel chains.
-
-    Scope: one chain, one fold.
 
     This function is the building block for parallel CV.
 
     Args:
         prng_key: jax.random.PRNGKey, random number generator state
-        logjoint_density: callable, log joint density function, signature (theta, fold_id)
-        log_p: callable, log density, signature (theta, fold_id)
+        logjoint_density: callable, log joint density function, signature (theta, fold_id, model_id, prior_only)
+        log_p: callable, log density, signature (theta, fold_id, model_id)
         make_initial_pos: callable, function to make initial position for each chain
         num_chains: int, number of chains to run
         warmup_iter: int, number of warmup iterations to run
@@ -534,73 +515,32 @@ def inference(
         num_batches: num batches
 
     Returns:
-        2-tuple of:
-            ExtendedState, final state of the inference loop
+        Arviz InferenceData object
+        Final state of the MCMC chain
     """
-
-    print(f"Warmup: {warmup_iter} iterations, {num_chains} chains per fold...")
-    # parallel warmup for each fold, initialize mcmc state
-    states, kernel_params = init_batch_inference_state(
-            rng_key=prng_key,
-            num_chains=num_chains,
-            make_initial_pos=make_initial_pos,
-            logjoint_density=lambda theta: logjoint_density(theta, -1),
-            batch_size=batch_size,
-            warmup_iter=warmup_iter,
-        )
-    print(f"Running {num_batches} batches of {batch_size} iterations on {num_chains} chains...")
-    # use python flow control for now but jax can actually do this too
-    # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
-    esss, rhatss, elpdss, drawss = [], [], [], []
-    mcses = []
-    for i in range(num_batches):
-        states = fold_batched_inference_loop(
-            kernel_parameters=kernel_params,
-            batch_size=batch_size,
-            ext_states=states,
-            logjoint_density=lambda theta: logjoint_density(theta, -1),
-            log_pred=lambda theta: log_p(theta, -1),
-        )
-        ess = pred_ess_folds(states)
-        esss.append(ess)
-        rhats = rhat_log(states.pred_ws)
-        rhatss.append(rhats)
-        elpd_contribs = log_welford_mean(states.pred_ws)
-        elpd = logmean(elpd_contribs, axis=1)
-        elpdss.append(elpd)
-        drawss.append((i + 1) * batch_size * num_chains)
-        log_mcvar = log_welford_log_var_combine(states.pred_bws.batches, ddof=1)
-        mcses.append(jnp.exp(0.5 * log_mcvar))
-        print(f"Batch {i+1}: {jnp.sum(ess)} total ess")
-    else:
-        print(f"Warning: max batches ({num_batches}) reached")
-    ess, rhats = jnp.stack(esss), jnp.stack(rhatss)
-    elpds, draws = jnp.stack(elpdss), jnp.stack(drawss),
-    mcse = jnp.stack(mcses)
-    total_elpd = jnp.sum(elpds, axis=1)
-    total_mcse = jnp.sqrt(jnp.sum(mcse**2, axis=1))
-    elpd_var = jnp.var(elpds, axis=1)
-    total_cvse = jnp.sqrt(elpd_var)
-    total_se = jnp.sqrt(total_mcse**2 + elpd_var)
-    return {
-        "ess": ess,
-        "rhat": rhats,
-        "elpd": elpds,
-        "draws": draws,
-        "mcse": mcse,
-        "total_elpd": total_elpd,
-        "total_mcse": total_mcse,
-        "total_cvse": total_cvse,
-        "total_se": total_se,
-    }
+    import arviz as az
+    def model_ldens(theta):
+        return model.logjoint_density(theta, fold_id=-1, model_id=model_id, prior_only=prior_only)
+    def model_log_p(theta):
+        return model.log_pred(theta, fold_id=-1, model_id=model_id)
+    state, trace = fold_posterior(
+        prng_key,
+        model_ldens,
+        model_log_p,
+        model.make_initial_pos,
+        num_chains,
+        num_samples,
+        warmup_iter,
+        online=False)
+    # map over chain (axis 0) and draw (axis 1)
+    constrained_trace = jax.vmap(model.to_constrained)(trace.position)
+    idata = az.convert_to_inference_data({v : constrained_trace[i] for i, v in enumerate(trace.position._fields)})
+    return idata, state, constrained_trace
 
 
 def fold_adaptation(
     prng_key: jax.random.KeyArray,
-    logjoint_density: Callable,
-    make_initial_pos: Callable,
-    num_models: int,
-    num_folds: int,
+    model: Model,
     num_chains: int,
     model_warmup_iter: int,
     fold_warmup_iter: int
@@ -645,7 +585,7 @@ def fold_adaptation(
     def full_data_warmup(model_id):
         # curry all but the parameter for the density fn
         def model_density(theta):
-            return logjoint_density(theta, fold_id=-1, model_id=model_id, prior_only=False)
+            return model.logjoint_density(theta, fold_id=-1, model_id=model_id, prior_only=False)
 
         def one_adaptation_step(carry, rng_key):
             states, adaptation_state = carry
@@ -668,7 +608,7 @@ def fold_adaptation(
 
         key_init, key_adapt = jax.random.split(model_warmup_key)
         init_state_keys = jax.random.split(key_init, num_chains)
-        init_positions = jax.vmap(make_initial_pos)(jax.random.split(init_key, num_chains))
+        init_positions = jax.vmap(model.make_initial_pos)(jax.random.split(init_key, num_chains))
         init_states: GHMCState = jax.vmap(lambda r, p: ghmc.init(r, p, model_density))(init_state_keys, init_positions)
         init_adaptation_state: MEADSAdaptationState = init_a_s(init_positions, init_states.potential_energy_grad)
         # run adaptation
@@ -677,64 +617,66 @@ def fold_adaptation(
         )
         return last_states, last_adaptation_state
 
-    print(f"MEADS warmup for {num_models} model(s) ({num_models*num_chains} chains)...")
+    print(f"MEADS warmup for {model.num_models} model(s) ({model.num_models*num_chains} chains)...")
     started_at = time.time()
-    model_warmup_states, model_adaptation_states = jax.vmap(full_data_warmup)(jnp.arange(num_models))
+    model_warmup_states, model_adaptation_states = jax.vmap(full_data_warmup)(jnp.arange(model.num_models))
     print(f"Meads warmup done in {time.time() - started_at:.2f} seconds. ")
     print(f"Step size: {model_adaptation_states.step_size} "
         f"Alpha: {model_adaptation_states.alpha} "
         f"Delta: {model_adaptation_states.delta}")
+    def folds_warmup(model_id, fold_id):
+        # warmup - GHMC adaption via MEADS
+        def fold_density(theta):
+            return model.logjoint_density(
+                theta=theta,
+                fold_id=fold_id,
+                model_id=model_id,
+                prior_only=False)
+        def one_step_online(carry, rng_key):
+            states, adaptation_state = carry
 
-    def model_folds_warmup(warmup_state, adaptation_state, model_id):
-        # warmup for all folds of a single model
-        def fold_warmup(fold_id):
-            # warmup - GHMC adaption via MEADS
-            def fold_density(theta):
-                return logjoint_density(
-                    theta=theta,
-                    fold_id=fold_id,
-                    model_id=model_id,
-                    prior_only=False)
-            def one_step_online(carry, rng_key):
-                states, adaptation_state = carry
-
-                def kernel(rng_key, state):
-                    return step_fn(
-                        rng_key,
-                        state,
-                        fold_density,
-                        adaptation_state.step_size,
-                        adaptation_state.position_sigma,
-                        adaptation_state.alpha,
-                        adaptation_state.delta,
-                    )
-                keys = jax.random.split(rng_key, num_chains)
-                new_states, info = jax.vmap(kernel)(keys, states)
-                new_adaptation_state = update_a_s(
-                    adaptation_state, new_states.position, new_states.potential_energy_grad
+            def kernel(rng_key, state):
+                return step_fn(
+                    rng_key,
+                    state,
+                    fold_density,
+                    adaptation_state.step_size,
+                    adaptation_state.position_sigma,
+                    adaptation_state.alpha,
+                    adaptation_state.delta,
                 )
-                return (new_states, new_adaptation_state), None
-
-            keys = jax.random.split(fold_warmup_key, fold_warmup_iter)
-            (last_states, last_adaptation_state), _ = jax.lax.scan(
-                one_step_online, (warmup_state, adaptation_state), keys
+            keys = jax.random.split(rng_key, num_chains)
+            new_states, info = jax.vmap(kernel)(keys, states)
+            new_adaptation_state = update_a_s(
+                adaptation_state, new_states.position, new_states.potential_energy_grad
             )
-            parameters = to_params(last_adaptation_state)
-            return last_states, parameters
-        fold_warmup_states, parameters = jax.vmap(fold_warmup)(jnp.arange(num_folds))
-        return fold_warmup_states, parameters
+            return (new_states, new_adaptation_state), None
 
-    print(f"MEADS warmup for {num_folds} folds per model ({num_folds*num_chains*num_models} chains)...")
+        keys = jax.random.split(fold_warmup_key, fold_warmup_iter)
+        warmup_state = jax.tree_map(lambda x: x[model_id], model_warmup_states)
+        adaptation_state = jax.tree_map(lambda x: x[model_id], model_adaptation_states)
+        (last_states, last_adaptation_state), _ = jax.lax.scan(
+            one_step_online, (warmup_state, adaptation_state), keys
+        )
+        parameters = to_params(last_adaptation_state)
+        return last_states, parameters
+    print(f"MEADS warmup for {model.num_folds} folds per model ({model.num_folds*num_chains*model.num_models} chains)...")
     start_at = time.time()
-    warmup_states, warmup_parameters = jax.vmap(model_folds_warmup)(
-        model_warmup_states, model_adaptation_states, jnp.arange(num_models))
+    fold_ids = jnp.tile(jnp.arange(model.num_folds), model.num_models)
+    model_ids = jnp.repeat(jnp.arange(model.num_models), model.num_folds)
+    warmup_states, warmup_parameters = jax.vmap(folds_warmup)(model_ids, fold_ids)
     total_sec = time.time() - start_at
     min, sec = int(total_sec) // 60, total_sec % 60
     print(f"MEADS warmup took {min} min {sec:.1f} sec")
     model_parameters = to_params(model_adaptation_states)
     return FoldWarmupResults(
+        num_models=model.num_models,
+        num_folds=model.num_folds,
+        num_chains=num_chains,
+        model_warmup_iter=model_warmup_iter,
         model_states=model_warmup_states,
         model_parameters=model_parameters,
+        fold_warmup_iter=fold_warmup_iter,
         fold_states=warmup_states,
         fold_parameters=warmup_parameters)
 
@@ -842,8 +784,7 @@ def run_cv(
 
 def run_cv_sel(
     prng_key: jax.random.KeyArray,
-    logjoint_density: Callable,
-    log_p: Callable,
+    model: Model,
     stoprule: Callable,
     warmup_results: FoldWarmupResults,
     batch_size: int,
@@ -851,11 +792,9 @@ def run_cv_sel(
     ignore_stoprule: bool = False,
     prior_only: bool = False
 ):
-    """Compute posterior for a single fold using parallel chains.
+    """Compute cross-validation comparison of two models.
 
-    Scope: one chain, one fold.
-
-    This function is the building block for parallel CV.
+    Scope: two models, multiple folds, multiple chains.
 
     Args:
         prng_key: jax.random.PRNGKey, random number generator state
@@ -881,12 +820,13 @@ def run_cv_sel(
             kernel_parameters=fold_kernel_params,
             batch_size=batch_size,
             ext_states=fold_state,
-            logjoint_density=lambda theta: logjoint_density(theta, fold_id, model_id, prior_only),
-            log_pred=lambda theta: log_p(theta, fold_id, model_id),
+            logjoint_density=lambda theta: model.logjoint_density(theta, fold_id, model_id, prior_only),
+            log_pred=lambda theta: model.log_pred(theta, fold_id, model_id),
         )
         return results
 
     num_folds, num_chains = warmup_results.num_folds, warmup_results.num_chains
+    num_models = model.num_models
     print(
         f"Starting cross-validation with {num_folds*num_chains*2} parallel GHMC chains..."
     )
@@ -907,9 +847,22 @@ def run_cv_sel(
     has_not_stopped = True
     i = 0
     divergences = jnp.zeros((2*num_folds,))
+    inference_rng_keys = jnp.reshape(
+        jax.random.split(prng_key, model.num_folds*model.num_models*num_chains),
+        (model.num_folds*model.num_models, num_chains, 2))
+    states = ExtendedState(
+        state=warmup_results.fold_states,
+        rng_key=inference_rng_keys,
+        pred_ws=log_welford_init(shape=(num_folds*num_models,num_chains,)),
+        pred_bws=batch_log_welford_init(shape=(num_folds*num_models,num_chains,), batch_size=batch_size),
+        divergences=jnp.zeros((num_folds*num_models,num_chains,))
+    )
+    fold_ids = jnp.tile(jnp.arange(num_folds), 2)
+    model_ids = jnp.repeat(jnp.array([0, 1]), num_folds)
     for i in range(max_batches):
         fold_drawss.append((i + 1) * batch_size * num_chains)
-        states: ExtendedState = jax.vmap(run_batch)(fold_ids, model_ids, kernel_params, states)
+        states: ExtendedState = jax.vmap(run_batch)(
+            fold_ids, model_ids, warmup_results.fold_parameters, states)
         fold_ess = pred_ess_folds(states)
         # per-fold statistics
         fold_esss.append(fold_ess)
