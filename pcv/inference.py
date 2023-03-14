@@ -174,17 +174,26 @@ class ModelWarmupResults(NamedTuple):
     parameters: Dict
 
 
+class ExtendedState(NamedTuple):
+    """MCMC state--extends regular GHMC state variable--also includes batch welford accumulators"""
+    state: GHMCState  # current HMC state
+    rng_key: jax.random.KeyArray  # current random seed
+    pred_ws: LogWelfordState  # accumulator for log predictive
+    pred_bws: BatchLogWelfordState  # batch accumulator for log predictive
+    divergences: jax.Array  # divergence counts (int array)
+
+
 class FoldWarmupResults(NamedTuple):
     """Warmup results for a multi-model CV procedure."""
     num_chains: int
     num_models: int
     num_folds: int
     model_warmup_iter: int
-    model_states: GHMCState
-    model_parameters: Dict
+    model_states: ExtendedState
+    model_parameters: Dict  # GHMC hyper-parameters
     fold_warmup_iter: int
-    fold_states: GHMCState
-    fold_parameters: Dict
+    fold_states: ExtendedState
+    fold_parameters: Dict  # GHMC hyper-parameters
 
     def plot_dist(self):
         import matplotlib.pyplot as plt
@@ -196,15 +205,6 @@ class FoldWarmupResults(NamedTuple):
                 axes[i][m].axvline(self.model_parameters[key][m])
                 axes[i][m].set_title(f"Model {m} {key}")
         fig.tight_layout()
-
-
-class ExtendedState(NamedTuple):
-    """MCMC state--extends regular GHMC state variable--also includes batch welford accumulators"""
-    state: GHMCState  # current HMC state
-    rng_key: jax.random.KeyArray  # current random seed
-    pred_ws: LogWelfordState  # accumulator for log predictive
-    pred_bws: BatchLogWelfordState  # batch accumulator for log predictive
-    divergences: jax.Array  # divergence counts (int array)
 
 
 def state_diagnostics(state) -> None:
@@ -491,7 +491,7 @@ def fold_batched_inference_loop(
     return next_state
 
 
-def inference(
+def one_model_inference(
     prng_key: jax.random.KeyArray,
     model: Model,
     model_id: int,
@@ -509,6 +509,7 @@ def inference(
         logjoint_density: callable, log joint density function, signature (theta, fold_id, model_id, prior_only)
         log_p: callable, log density, signature (theta, fold_id, model_id)
         make_initial_pos: callable, function to make initial position for each chain
+        model_id: int, model index as understood by the likelihood and prior functions
         num_chains: int, number of chains to run
         warmup_iter: int, number of warmup iterations to run
         online: bool (default True) if true, don't retain the MCMC trace
@@ -535,15 +536,16 @@ def inference(
     # map over chain (axis 0) and draw (axis 1)
     constrained_trace = jax.vmap(model.to_constrained)(trace.position)
     idata = az.convert_to_inference_data({v : constrained_trace[i] for i, v in enumerate(trace.position._fields)})
-    return idata, state, constrained_trace
+    return idata, state
 
 
-def fold_adaptation(
+def cv_adaptation(
     prng_key: jax.random.KeyArray,
     model: Model,
     num_chains: int,
     model_warmup_iter: int,
-    fold_warmup_iter: int
+    fold_warmup_iter: int,
+    batch_size: int
 ) -> FoldWarmupResults:
     """Adaptation procedure for full-data model(s) and all CV folds.
 
@@ -558,19 +560,13 @@ def fold_adaptation(
 
     Args:
         prng_key: jax.random.PRNGKey, random number generator state
-        logjoint_density: callable, log joint density function, with 
-                            signature (theta, fold_id)
-        make_initial_pos: callable, function to make initial position for 
-                            each chain
-        states: GHMCState, state of the inference loop
-        adaptation_state: MEADSAdaptationState, state of the adaptation loop
-        num_models: int, number of models
-        num_folds: int, number of folds
+        model: Model object
         num_chains: int, number of chains to run
-        batch_size: int, number of iterations per batch
-        warmup_iter: int, number of warmup iterations to run
+        model_warmup_iter: int, number of warmup iterations to run
+        fold_warmup_iter: int, number of warmup iterations to run
+        batch_size: int, number of samples to draw
     """
-    init_key, model_warmup_key, fold_warmup_key = jax.random.split(prng_key, 3)
+    init_key, model_warmup_key, fold_warmup_key, sampling_key = jax.random.split(prng_key, 4)
     step_fn = ghmc.kernel()
     init_a_s, update_a_s = adaptation.meads.base()
 
@@ -659,7 +655,18 @@ def fold_adaptation(
             one_step_online, (warmup_state, adaptation_state), keys
         )
         parameters = to_params(last_adaptation_state)
-        return last_states, parameters
+        sampling_keys = jax.random.split(sampling_key, num_chains)
+        # initialize all chains for fold
+        def create_state(chain_init_state, chain_rng_key):
+            return ExtendedState(
+                state=chain_init_state,
+                rng_key=chain_rng_key,
+                pred_ws=log_welford_init(shape=tuple()),
+                pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
+                divergences=jnp.array(0),
+            )
+        states = jax.vmap(create_state, in_axes=(0,0,),)(last_states, sampling_keys)
+        return states, parameters
     print(f"MEADS warmup for {model.num_folds} folds per model ({model.num_folds*num_chains*model.num_models} chains)...")
     start_at = time.time()
     fold_ids = jnp.tile(jnp.arange(model.num_folds), model.num_models)
@@ -850,13 +857,7 @@ def run_cv_sel(
     inference_rng_keys = jnp.reshape(
         jax.random.split(prng_key, model.num_folds*model.num_models*num_chains),
         (model.num_folds*model.num_models, num_chains, 2))
-    states = ExtendedState(
-        state=warmup_results.fold_states,
-        rng_key=inference_rng_keys,
-        pred_ws=log_welford_init(shape=(num_folds*num_models,num_chains,)),
-        pred_bws=batch_log_welford_init(shape=(num_folds*num_models,num_chains,), batch_size=batch_size),
-        divergences=jnp.zeros((num_folds*num_models,num_chains,))
-    )
+    states = warmup_results.fold_states
     fold_ids = jnp.tile(jnp.arange(num_folds), 2)
     model_ids = jnp.repeat(jnp.array([0, 1]), num_folds)
     for i in range(max_batches):
