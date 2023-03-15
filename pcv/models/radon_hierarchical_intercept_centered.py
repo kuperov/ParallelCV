@@ -110,10 +110,10 @@ def get_model(data: Dict) -> Model:
         ldj = sigma_y_ldj + sigma_alpha_ldj
         # prior is same for all folds
         lp = (
-            tfd.Normal(loc=0, scale=1).log_prob(sigma_alpha)
-            + tfd.Normal(loc=0, scale=1).log_prob(sigma_y)
-            + tfd.Normal(loc=0, scale=10.).log_prob(theta.mu_alpha)
-            + tfd.Normal(loc=0, scale=10.).log_prob(theta.beta)
+            tfd.Normal(loc=0., scale=1.).log_prob(sigma_alpha)
+            + tfd.Normal(loc=0., scale=1.).log_prob(sigma_y)
+            + tfd.Normal(loc=0., scale=10.).log_prob(theta.mu_alpha)
+            + tfd.Normal(loc=0., scale=10.).log_prob(theta.beta)
             + tfd.Normal(loc=theta.mu_alpha, scale=theta.sigma_y).log_prob(theta.alpha).sum()
         )
         # log likelihood for fold
@@ -121,7 +121,8 @@ def get_model(data: Dict) -> Model:
         mu = theta.alpha[county_idx] + floor_measure * theta.beta * include_floor_measure
         ll_contribs = tfd.Normal(loc=mu, scale=sigma_y).log_prob(y)
         fold_mask = (county_idx != fold_id).astype(jnp.float32)
-        ll = (fold_mask * ll_contribs).sum() * (not prior_only)
+        lhood_mask = 1.0 * (not prior_only)
+        ll = (fold_mask * ll_contribs).sum() * lhood_mask
         return lp + ll + ldj
 
     def log_pred(theta: Theta, fold_id: int, model_id: int) -> jax.Array:

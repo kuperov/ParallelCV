@@ -123,15 +123,15 @@ def get_model(data: Dict) -> Model:
         # prior is same for all folds
         lp = (
             # sigma_y, sigma_alpha, sigma_beta : flat
-            tfd.Normal(loc=0, scale=100).log_prob(theta.mu_alpha).sum()
-            + tfd.Normal(loc=0, scale=100).log_prob(theta.mu_beta).sum()
+            tfd.Normal(loc=0, scale=100).log_prob(theta.mu_alpha)
+            + tfd.Normal(loc=0, scale=100).log_prob(theta.mu_beta)
             + tfd.Normal(loc=theta.mu_alpha, scale=sigma_alpha).log_prob(theta.alpha).sum()
             + tfd.Normal(loc=theta.mu_beta, scale=sigma_beta).log_prob(theta.beta).sum()
         )
         # log likelihood for fold
         y_hat = theta.alpha[rat] + theta.beta[rat] * (x - xbar)
-        ll_contribs_A = tfd.Normal(loc=y_hat, scale=sigma_y).log_prob(y)
-        ll_contribs_B = tfd.StudentT(df=3., loc=y_hat, scale=sigma_y).log_prob(y)
+        ll_contribs_A = tfd.Normal(loc=y_hat, scale=sigma_y).log_prob(y)  # model A
+        ll_contribs_B = tfd.StudentT(df=3., loc=y_hat, scale=sigma_y).log_prob(y)  # model B
         ll_contribs = jnp.where(model_id == 0, ll_contribs_A, ll_contribs_B)
         fold_mask = (rat != fold_id).astype(jnp.float32)
         lhood_mask = 1.0 * (not prior_only)
