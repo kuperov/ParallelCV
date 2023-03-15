@@ -86,7 +86,11 @@ def get_model(data: Dict) -> Model:
         )
         return theta
 
-    def logjoint_density(theta: Theta, fold_id: int, model_id: int, prior_only: bool = False) -> jax.Array:
+    def logjoint_density(
+            theta: Theta,
+            fold_id: int,
+            model_id: int,
+            prior_only: bool = False) -> jax.Array:
         """Log joint density for a given fold.
         
         Args:
@@ -109,12 +113,12 @@ def get_model(data: Dict) -> Model:
             tfd.Normal(loc=0, scale=1).log_prob(sigma_alpha)
             + tfd.Normal(loc=0, scale=1).log_prob(sigma_y)
             + tfd.Normal(loc=0, scale=10.).log_prob(theta.mu_alpha)
-            + tfd.Normal(loc=0, scale=10.).log_prob(theta.beta).sum()
+            + tfd.Normal(loc=0, scale=10.).log_prob(theta.beta)
             + tfd.Normal(loc=theta.mu_alpha, scale=theta.sigma_y).log_prob(theta.alpha).sum()
         )
         # log likelihood for fold
         include_floor_measure = 1.0 * (model_id == 0)  # only include log_uppm in model A
-        mu = theta.alpha[county_idx] + floor_measure * theta.beta[1] * include_floor_measure
+        mu = theta.alpha[county_idx] + floor_measure * theta.beta * include_floor_measure
         ll_contribs = tfd.Normal(loc=mu, scale=sigma_y).log_prob(y)
         fold_mask = (county_idx != fold_id).astype(jnp.float32)
         ll = (fold_mask * ll_contribs).sum() * (not prior_only)
@@ -127,7 +131,6 @@ def get_model(data: Dict) -> Model:
         theta: model parameters
         fold_id: zero-based fold id for test set
         """
-        sigma_alpha = sigma_a_tfm.forward(theta.sigma_alpha)
         sigma_y = sigma_y_tfm.forward(theta.sigma_y)
         # predictive log density for fold
         include_floor_measure = 1.0 * (model_id == 0)  # only include log_uppm in model A
