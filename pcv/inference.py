@@ -657,6 +657,15 @@ def cv_adaptation(
             "alpha": last_adaptation_state.alpha,
             "delta": last_adaptation_state.delta,
         }
+    
+    def create_state(chain_init_state, chain_rng_key):
+        return ExtendedState(
+            state=chain_init_state,
+            rng_key=chain_rng_key,
+            pred_ws=log_welford_init(shape=tuple()),
+            pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
+            divergences=jnp.array(0),
+        )
 
     def full_data_warmup(model_id):
         # curry all but the parameter for the density fn
@@ -691,11 +700,12 @@ def cv_adaptation(
         (last_states, last_adaptation_state), _ = jax.lax.scan(
             one_adaptation_step, (init_states, init_adaptation_state), jax.random.split(key_adapt, model_warmup_iter)
         )
-        return last_states, last_adaptation_state
+        model_extended_states = jax.vmap(create_state)(last_states, jax.random.split(sampling_key, num_chains))
+        return last_states, last_adaptation_state, model_extended_states
 
     print(f"MEADS warmup for {model.num_models} model(s) ({model.num_models*num_chains} chains)...")
     started_at = time.time()
-    model_warmup_states, model_adaptation_states = jax.vmap(full_data_warmup)(jnp.arange(model.num_models))
+    model_warmup_states, model_adaptation_states, model_extended_states = jax.vmap(full_data_warmup)(jnp.arange(model.num_models))
     print(f"Meads warmup done in {time.time() - started_at:.2f} seconds. ")
     print(f"Step size: {model_adaptation_states.step_size} "
         f"Alpha: {model_adaptation_states.alpha} "
@@ -737,14 +747,6 @@ def cv_adaptation(
         parameters = to_params(last_adaptation_state)
         sampling_keys = jax.random.split(sampling_key, num_chains)
         # initialize all chains for fold
-        def create_state(chain_init_state, chain_rng_key):
-            return ExtendedState(
-                state=chain_init_state,
-                rng_key=chain_rng_key,
-                pred_ws=log_welford_init(shape=tuple()),
-                pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
-                divergences=jnp.array(0),
-            )
         states = jax.vmap(create_state, in_axes=(0,0,),)(last_states, sampling_keys)
         return states, parameters
     print(f"MEADS warmup for {model.num_folds} folds per model ({model.num_folds*num_chains*model.num_models} chains)...")
@@ -761,7 +763,7 @@ def cv_adaptation(
         num_folds=model.num_folds,
         num_chains=num_chains,
         model_warmup_iter=model_warmup_iter,
-        model_states=model_warmup_states,
+        model_states=model_extended_states,
         model_parameters=model_parameters,
         fold_warmup_iter=fold_warmup_iter,
         fold_states=warmup_states,
