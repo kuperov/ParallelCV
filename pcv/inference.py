@@ -524,18 +524,98 @@ def one_model_inference(
         return model.logjoint_density(theta, fold_id=-1, model_id=model_id, prior_only=prior_only)
     def model_log_p(theta):
         return model.log_pred(theta, fold_id=-1, model_id=model_id)
-    state, trace = fold_posterior(
-        prng_key,
-        model_ldens,
-        model_log_p,
-        model.make_initial_pos,
-        num_chains,
-        num_samples,
-        warmup_iter,
-        online=False)
-    # map over chain (axis 0) and draw (axis 1)
+    warmup_key, sampling_key, init_key = jax.random.split(prng_key, 3)
+    # warmup - GHMC adaption via MEADS
+    init_chain_keys = jax.random.split(init_key, num_chains)
+    init_states = jax.vmap(model.make_initial_pos)(init_chain_keys)
+    final_warmup_state, parameters = run_meads(
+        logjoint_density_fn=model_ldens,
+        num_chains=num_chains,
+        prng_key=warmup_key,
+        positions=init_states,
+        num_steps=warmup_iter,
+    )
+    # construct GHMC kernel by incorporating warmup parameters
+    step_fn = ghmc.kernel()
+    def kernel(rng_key, state):
+        return step_fn(
+            rng_key,
+            state,
+            model_ldens,
+            **parameters,
+        )
+    sampling_keys = jax.random.split(sampling_key, num_chains)
+    # central points for estimating folded rhat
+    centers = tree_map(lambda x: jnp.median(x, axis=0), final_warmup_state.position)
+    # run chain
+    online = False
+    state, trace = jax.vmap(inference_loop, in_axes=(0, None, 0, None, None, None, None))(
+        sampling_keys, kernel, final_warmup_state, num_samples, model_log_p, centers, online
+    )
+    # apply transformations to get back to constrained parameter space
     constrained_trace = jax.vmap(model.to_constrained)(trace.position)
-    idata = az.convert_to_inference_data({v : constrained_trace[i] for i, v in enumerate(trace.position._fields)})
+    idata = az.convert_to_inference_data({
+        v : constrained_trace[i] for i, v in enumerate(trace.position._fields)})
+    return idata, state
+
+
+def one_model_inference_mtune(
+    prng_key: jax.random.KeyArray,
+    model: Model,
+    mcmc_step_fn: Callable,
+    model_id: int,
+    num_chains: int,
+    num_samples: int,
+    burnin_iter: int,
+    prior_only: bool = False,
+):
+    """Compute posterior for a single model using parallel chains, manually tuning kernel
+
+    This function is the building block for parallel CV.
+
+    Args:
+        prng_key: jax.random.PRNGKey, random number generator state
+        model: model object containing logjoint_density, log_pred, make_initial_pos
+        mcmc_step_fn: Callable, MCMC kernel step function
+        parameters: Dict, parameters for mcmc_kernel
+        model_id: int, model index as understood by the likelihood and prior functions
+        num_chains: int, number of chains to run
+        warmup_iter: int, number of warmup iterations to run
+        online: bool (default True) if true, don't retain the MCMC trace
+        num_batches: num batches
+
+    Returns:
+        Arviz InferenceData object
+        Final state of the MCMC chain
+    """
+    import arviz as az
+    def model_ldens(theta):
+        return model.logjoint_density(theta, fold_id=-1, model_id=model_id, prior_only=prior_only)
+    def model_log_p(theta):
+        return model.log_pred(theta, fold_id=-1, model_id=model_id)
+    burnin_key, sampling_key, init_key = jax.random.split(prng_key, 3)
+    # warmup - GHMC adaption via MEADS
+    init_chain_keys = jax.random.split(init_key, num_chains)
+    initial_state = jax.vmap(model.make_initial_pos)(init_chain_keys)
+    # We'll call this initial sample "burn in" to avoid confusion with proper warmup, we just
+    # want to get the chains to a reasonable starting point
+    centers = tree_map(lambda x: jnp.median(x, axis=0), initial_state.position)  # dummy values
+    online = True
+    initial_state, _ = jax.vmap(inference_loop, in_axes=(0, None, 0, None, None, None, None))(
+        burnin_key, mcmc_step_fn, initial_state, num_samples, model_log_p, centers, online
+    )
+    sampling_keys = jax.random.split(sampling_key, num_chains)
+    # central points for estimating folded rhat
+    centers = tree_map(lambda x: jnp.median(x, axis=0), initial_state.position)
+    # run chain
+    online = False
+    state, trace = jax.vmap(inference_loop, in_axes=(0, None, 0, None, None, None, None))(
+        sampling_keys, mcmc_step_fn, initial_state, num_samples, model_log_p, centers, online
+    )
+    # apply transformations to get back to constrained parameter space
+    constrained_trace = jax.vmap(model.to_constrained)(trace.position)
+    idata = az.convert_to_inference_data({
+        v : constrained_trace[i] for i, v in enumerate(trace.position._fields)})
     return idata, state
 
 

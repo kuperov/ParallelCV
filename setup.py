@@ -21,7 +21,7 @@ def _parse_requirements(req_path):
 
 setup(
     name="pcv",
-    version="0.0.16",
+    version="0.0.18",
     description="Parallel MCMC diagnostic experiment",
     long_description=long_description,
     author="Alex Cooper",
@@ -35,7 +35,12 @@ setup(
         "Programming Language :: Python :: 3.7",
     ],
     packages=['pcv','pcv.models'],
-    package_data={'pcv.models': ['radon_all.json.zip']},
+    package_data={'pcv.models': [
+        'rats_data.json.zip',
+        'radon_all.json.zip',
+        'radon_mod.json.zip',
+        'german.json.zip',
+        'election88.json.zip']},
     install_requires=_parse_requirements("requirements.txt"),
     include_package_data=True,
 )
