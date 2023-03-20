@@ -22,23 +22,19 @@ tfb = tfp.bijectors
 #   real<lower=0> sigma_alpha;
 #   real<lower=0> sigma_y;
 # }
-
 # transformed parameters {
 #   vector[J] alpha;
 #   // implies: alpha ~ normal(mu_alpha, sigma_alpha);
 #   alpha = mu_alpha + sigma_alpha * alpha_raw;
 # }
-
 # model {
 #   vector[N] mu;
 #   vector[N] muj;
-
 #   sigma_alpha ~ normal(0, 1);
 #   sigma_y ~ normal(0, 1);
 #   mu_alpha ~ normal(0, 10);
 #   beta ~ normal(0, 10);
 #   alpha_raw ~ normal(0, 1);
-
 #   for(n in 1:N){
 #     muj[n] = alpha[county_idx[n]] + log_uppm[n] * beta[1];
 #     mu[n] = muj[n] + floor_measure[n] * beta[2];
@@ -123,7 +119,8 @@ def get_model(data: Dict) -> Model:
         mu = muj + floor_measure * theta.beta[1]
         ll_contribs = tfd.Normal(loc=mu, scale=sigma_y).log_prob(y)
         fold_mask = (county_idx != fold_id).astype(jnp.float32)
-        ll = (fold_mask * ll_contribs).sum() * (not prior_only)
+        lhood_mask = 1.0 * (not prior_only)
+        ll = (fold_mask * ll_contribs).sum() * lhood_mask
         return lp + ll + ldj
 
     def log_pred(theta: Theta, fold_id: int, model_id: int) -> jax.Array:

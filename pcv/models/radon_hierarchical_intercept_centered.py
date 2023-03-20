@@ -114,7 +114,7 @@ def get_model(data: Dict) -> Model:
             + tfd.Normal(loc=0., scale=1.).log_prob(sigma_y)
             + tfd.Normal(loc=0., scale=10.).log_prob(theta.mu_alpha)
             + tfd.Normal(loc=0., scale=10.).log_prob(theta.beta)
-            + tfd.Normal(loc=theta.mu_alpha, scale=theta.sigma_y).log_prob(theta.alpha).sum()
+            + tfd.Normal(loc=theta.mu_alpha, scale=sigma_alpha).log_prob(theta.alpha).sum()
         )
         # log likelihood for fold
         include_floor_measure = 1.0 * (model_id == 0)  # only include log_uppm in model A
