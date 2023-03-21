@@ -1102,20 +1102,22 @@ def run_cv_sel(
             stoprule(diff, diff_cvse, model_mcse, model_ess, num_folds, (i + 1) * batch_size, model_max_rhat)
         )
         stoprules.append(stop)
-        if i > 0 and i % 10 == 0:
+        if (i % 10 == 0) or (i == max_batches-1):
             print(f"{i: 4d}. "
-                f" A: {model_elpdss[-1][0]:.2f} ±{model_ses[-1][0]:.2f} B: {model_elpdss[-1][1]:.2f} ±{model_ses[-1][1]:.2f}"
-                f" Diff: {diff_elpd[-1]:.2f} ±{diff_ses[-1]:.2f}"
+                f" Model A: {model_elpdss[-1][0]:.2f} ±{model_ses[-1][0]:.2f} ess {model_ess[0]:.0f},"
+                f" Model B: {model_elpdss[-1][1]:.2f} ±{model_ses[-1][1]:.2f} ess {model_ess[1]:.0f}")
+            print(f"       Diff: {diff_elpd[-1]:.2f} ±{diff_ses[-1]:.2f},"
+                f" Rhat < {jnp.max(fold_rhats):.4f} "
                 + (" stop" if stop else " continue"))
             div_incr_fold = jnp.sum(fold_div_count > divergences)
             if div_incr_fold > 0:
                 print(f"       Warning: new divergences in {div_incr_fold}/{2*num_folds} folds")
                 divergences = fold_div_count
         if stop and not ignore_stoprule:
-            print(f"Stopping after {i+1} batches")
+            print(f"       Stopping after {i+1} batches")
             break
         elif stop and has_not_stopped:
-            print(f"Triggered stoprule after {i+1} batches in {time.time() - start_at:.0f} seconds")
+            print(f"       Triggered stoprule after {i+1} batches in {time.time() - start_at:.0f} seconds")
             has_not_stopped = False
     else:
         if not ignore_stoprule:

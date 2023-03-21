@@ -13,7 +13,7 @@ def plot_model_results(results, title):
     draws, ess = results['fold_draws'] * 1e-3 * K, results['model_ess'] * 1e-3 * K
     diff_elpd, diff_se = results['diff_elpd'], results['diff_se']
     diff_mcse, diff_cvse = results['diff_mcse'], results['diff_cvse']
-    tcrit = tfd.StudentT(df=results['num_folds']+2, loc=0, scale=1.).quantile(0.975)
+    tcrit = tfd.StudentT(df=results['num_folds']+2., loc=0., scale=1.).quantile(0.975)
 
     # mean
     line_m = p_diff.plot(draws, diff_elpd, linestyle='solid')
@@ -72,7 +72,7 @@ def plot_fold_results(results, title, show_legend=True):
     (p_ess, p_rhat), (p_elpds, p_divs) = axes
     drawsk, essk = results['fold_draws'] * 1e-3, results['fold_ess'] * 1e-3
     K = results['num_folds']
-    tcrit = tfd.StudentT(df=results['num_folds']+2, loc=0, scale=1.).quantile(0.975)
+    tcrit = tfd.StudentT(df=results['num_folds']+2., loc=0., scale=1.).quantile(0.975)
 
     p_ess.plot(drawsk, essk[:,:K], linestyle='solid')
     p_ess.plot(drawsk, essk[:,K:], linestyle='dashed')
