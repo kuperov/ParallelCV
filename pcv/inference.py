@@ -836,16 +836,16 @@ def simple_cv_adaptation(
     )
     model_extended_states = jax.vmap(create_state)(last_states, jax.random.split(sampling_key, num_chains))
     print(f"Meads warmup done in {time.time() - started_at:.2f} seconds. ")
-    print(f"Step size: {last_adaptation_state.step_size} "
-        f"Alpha: {last_adaptation_state.alpha} "
-        f"Delta: {last_adaptation_state.delta}")
+    print(f"Step size: {last_adaptation_state.step_size:.4f} "
+        f"Alpha: {last_adaptation_state.alpha:.4f} "
+        f"Delta: {last_adaptation_state.delta:.4f}")
     # step 2: find starting point for each fold using stochastic optimization (adam)
     start_at = time.time()
     fold_ids = jnp.tile(jnp.arange(model.num_folds), model.num_models)
     model_ids = jnp.repeat(jnp.arange(model.num_models), model.num_folds)
     def find_fold_mode(key, model_id, fold_id):
         return minimize_adam(
-            loss = lambda x: model.logjoint_density(x, fold_id, model_id),
+            loss = lambda x: -model.logjoint_density(x, fold_id, model_id),
             x0 = model.make_initial_pos(key)
         )
     init_key = jax.random.PRNGKey(0)
@@ -853,7 +853,6 @@ def simple_cv_adaptation(
     total_sec = time.time() - start_at
     min, sec = int(total_sec) // 60, total_sec % 60
     print(f"Approximated {model.num_models*model.num_folds} modes in {min} min {sec:.1f} sec")
-    chain_modes = jax.tree_map(lambda x: jnp.broadcast_to(jnp.expand_dims(x, axis=1), shape=(x.shape[0],num_chains, ) + x.shape[1:]), fold_modes)
     # step 3: short burn-in for each chain to obtain starting point
     step_fn = ghmc.kernel()
     kernel_parameters = {
@@ -862,23 +861,26 @@ def simple_cv_adaptation(
         "alpha": last_adaptation_state.alpha,
         "delta": last_adaptation_state.delta,
     }
-    fold_parameters = jax.tree_map(lambda x: jnp.broadcast_to(x, shape=(model.num_models*model.num_folds,)+x.shape), kernel_parameters)
-    def model_burnin(key, model_id, fold_id, initial_pos):
+    def fold_burn_in(key, model_id, fold_id, initial_pos):
         log_dens = lambda theta: model.logjoint_density(theta, model_id=model_id, fold_id=fold_id)
         log_pred = lambda theta: model.log_pred(theta, model_id=model_id, fold_id=fold_id)
         kernel = lambda rng_key, state: step_fn(rng_key, state, log_dens, **kernel_parameters)
         bkey, ikey = jax.random.split(key)
         burnin_keys = jax.random.split(bkey, num_chains)
         init_chains_keys = jax.random.split(ikey, num_chains)
-        initial_states = jax.vmap(ghmc.init, in_axes=(0, 0, None))(init_chains_keys, initial_pos, log_dens)
+        initial_states = jax.vmap(ghmc.init, in_axes=(0, None, None))(init_chains_keys, initial_pos, log_dens)
         state, _ = jax.vmap(inference_loop, in_axes=(0, None, 0, None, None, None))(
             burnin_keys, kernel, initial_states, burnin_iter, log_pred, True)
         return state
     burnin_keys = jax.random.split(burnin_key, model.num_models*model.num_folds)
-    fold_states = jax.vmap(model_burnin)(burnin_keys, model_ids, fold_ids, chain_modes)
+    fold_states = jax.vmap(fold_burn_in)(burnin_keys, model_ids, fold_ids, fold_modes)
+    # broadcast fold parameters for use by main cv proceudre
+    fold_parameters = jax.tree_map(lambda x: jnp.broadcast_to(x, shape=(model.num_models*model.num_folds,)+x.shape), kernel_parameters)
     total_sec = time.time() - start_at
     min, sec = int(total_sec) // 60, total_sec % 60
-    print(f"Initial burn-in run took {min} min {sec:.1f} sec")
+    print(f"Burn-in for {num_chains*model.num_folds*model.num_models} chains run took {min} min {sec:.1f} sec")
+    if jnp.sum(fold_states.divergences) > 0:
+        print(f"**** WARNING: {jnp.sum(fold_states.divergences)} divergences during burn-in. ****")
     return FoldWarmupResults(
         num_models=model.num_models,
         num_folds=model.num_folds,
