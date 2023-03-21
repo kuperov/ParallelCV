@@ -18,6 +18,7 @@ from jax.tree_util import tree_map
 from pcv.welford import *
 from pcv.util import logmean, logvar, tree_stack, tree_concat
 from pcv.model import Model, get_mode, minimize_adam
+from pcv.rules import CONTINUE, STOP_INCONCLUSIVE, STOP_CONCLUSIVE
 
 
 def run_meads(
@@ -1092,31 +1093,29 @@ def run_cv_sel(
         model_max_rhats.append(model_max_rhat)
         # difference statistics (elpd(A) - elpd(B))
         diff, diff_cvse = fold_elpd @ model_diffs, jnp.std(fold_elpd_diffs, ddof=1)
-        diff_se = jnp.sqrt(jnp.var(fold_elpd_diffs, ddof=1) + jnp.sum(model_mcvars))
+        diff_se = jnp.sqrt(num_folds * jnp.var(fold_elpd_diffs, ddof=1) + jnp.sum(model_mcvars))
         diff_elpd.append(diff)
         diff_cvses.append(diff_cvse)
         # contributions to diff_mcses and diff_ses are independent, so add them
         diff_mcses.append(jnp.sqrt(jnp.sum(model_mcvars)))
         diff_ses.append(diff_se)
-        stop = jnp.any(
-            stoprule(diff, diff_cvse, model_mcse, model_ess, num_folds, (i + 1) * batch_size, model_max_rhat)
-        )
-        stoprules.append(stop)
+        ruleoc = stoprule(diff, diff_cvse, model_mcse, model_ess, num_folds, (i + 1) * batch_size, model_max_rhat)
+        stoprules.append(ruleoc)
         if (i % 10 == 0) or (i == max_batches-1):
             print(f"{i: 4d}. "
                 f" Model A: {model_elpdss[-1][0]:.2f} ±{model_ses[-1][0]:.2f} ess {model_ess[0]:.0f},"
                 f" Model B: {model_elpdss[-1][1]:.2f} ±{model_ses[-1][1]:.2f} ess {model_ess[1]:.0f}")
             print(f"       Diff: {diff_elpd[-1]:.2f} ±{diff_ses[-1]:.2f},"
                 f" Rhat < {jnp.max(fold_rhats):.4f} "
-                + (" stop" if stop else " continue"))
+                + (" stop" if ruleoc else " continue"))
             div_incr_fold = jnp.sum(fold_div_count > divergences)
             if div_incr_fold > 0:
                 print(f"       Warning: new divergences in {div_incr_fold}/{2*num_folds} folds")
                 divergences = fold_div_count
-        if stop and not ignore_stoprule:
+        if ruleoc != CONTINUE and not ignore_stoprule:
             print(f"       Stopping after {i+1} batches")
             break
-        elif stop and has_not_stopped:
+        elif ruleoc != CONTINUE and has_not_stopped:
             print(f"       Triggered stoprule after {i+1} batches in {time.time() - start_at:.0f} seconds")
             has_not_stopped = False
     else:

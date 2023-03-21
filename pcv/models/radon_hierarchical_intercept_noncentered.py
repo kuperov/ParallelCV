@@ -134,14 +134,12 @@ def get_model(data: Dict) -> Model:
         sigma_y = sigma_y_tfm.forward(theta.sigma_y)
         # noncentering transform: alpha ~ normal(mu_alpha, sigma_alpha)
         alpha = theta.mu_alpha + sigma_alpha * theta.alpha_raw
-        # likelihood for fold
-        include_log_uppm = 1.0 * (model_id == 0)  # only include log_uppm in model A
-        muj = alpha[county_idx] + log_uppm * theta.beta[0] * include_log_uppm
+        # pred density for fold -- only include log_uppm in model 0
+        muj = alpha[county_idx] + log_uppm * jnp.where(model_id == 0, theta.beta[0], 0.)
         mu = muj + floor_measure * theta.beta[1]
         ll_contribs = tfd.Normal(loc=mu, scale=sigma_y).log_prob(y)
-        fold_mask = (county_idx == fold_id).astype(jnp.float32)
-        lpred = (fold_mask * ll_contribs).sum()
-        return lpred
+        lpred = jnp.where(county_idx == fold_id, ll_contribs, 0.)
+        return jnp.sum(lpred)
 
     def to_constrained(theta: Theta) -> Theta:
         return Theta(

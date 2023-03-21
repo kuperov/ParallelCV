@@ -5,6 +5,9 @@ import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
 
+from pcv.rules import CONTINUE
+
+
 
 def plot_model_results(results, title):
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(10, 6))
@@ -52,8 +55,9 @@ def plot_model_results(results, title):
     p_err.set_title(r'$\widehat{elpd}_{CV}$ difference error components')
     p_err.set_ylabel('Standard error (nats)')
 
-    if jnp.sum(results['stop'])>0:
-        stop_drawk = draws[results['stop']][0]
+    stop = results['stop'] != CONTINUE
+    if jnp.sum(stop)>0:
+        stop_drawk = draws[stop][0]
         stopline = p_diff.axvline(x=stop_drawk, linestyle='dashed', linewidth=0.5)
         p_rhat.axvline(x=stop_drawk, color=stopline.get_color(), linestyle='dashed', linewidth=0.5)
         p_err.axvline(x=stop_drawk, color=stopline.get_color(), linestyle='dashed', linewidth=0.5)
@@ -103,7 +107,7 @@ def plot_fold_results(results, title, show_legend=True):
     divs = results['fold_divergences']
     for k in range(K):
         p_divs.plot(drawsk, divs[:,k], linestyle='solid')
-    p_divs.set_title('Divergences')
+    p_divs.set_title('Cumulative fold divergences')
 
     for rax in axes:
         for ax in rax:
