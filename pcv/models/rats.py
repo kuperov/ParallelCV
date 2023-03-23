@@ -81,7 +81,7 @@ def get_model(data: Dict) -> Model:
     sigma_beta_tfm = tfb.Exp()
 
     N, rat = int(data['N']), data['rat']
-    y, x, xbar = data['y'].astype(jnp.float32), data['x'], data['xbar']
+    y, x, xbar = data['y'] * 1.0, data['x'], data['xbar']
 
     def make_initial_pos(key: jax.random.KeyArray) -> Theta:
         k1, k2, k3, k4, k5, k6 = jax.random.split(key, 6)
@@ -133,7 +133,7 @@ def get_model(data: Dict) -> Model:
         ll_contribs_A = tfd.Normal(loc=y_hat, scale=sigma_y).log_prob(y)  # model A
         ll_contribs_B = tfd.StudentT(df=3., loc=y_hat, scale=sigma_y).log_prob(y)  # model B
         ll_contribs = jnp.where(model_id == 0, ll_contribs_A, ll_contribs_B)
-        fold_mask = (rat != fold_id).astype(jnp.float32)
+        fold_mask = (rat != fold_id) * 1.0
         lhood_mask = 1.0 * (not prior_only)
         ll = (fold_mask * ll_contribs).sum() * lhood_mask
         return lp + ll + ldj
@@ -151,7 +151,7 @@ def get_model(data: Dict) -> Model:
         ll_contribs_A = tfd.Normal(loc=y_hat, scale=sigma_y).log_prob(y)
         ll_contribs_B = tfd.StudentT(df=3, loc=y_hat, scale=sigma_y).log_prob(y)
         ll_contribs = jnp.where(model_id == 0, ll_contribs_A, ll_contribs_B)
-        pred_mask = (rat == fold_id).astype(jnp.float32)
+        pred_mask = (rat == fold_id) * 1.0
         return (pred_mask * ll_contribs).sum()
 
     def to_constrained(theta: Theta) -> Theta:
