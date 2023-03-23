@@ -10,7 +10,7 @@ from pcv.rules import CONTINUE
 
 def plot_model_results(results, title):
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(10, 6))
-    ((p_diff, p_rhat), (p_ess, p_err)) = axes
+    ((p_diff, p_rhats), (p_ess, p_err)) = axes
     K = results['num_folds']
     draws, ess = results['fold_draws'] * 1e-3, results['model_ess']
     diff_elpd, diff_se = results['diff_elpd'], results['diff_se']
@@ -30,22 +30,22 @@ def plot_model_results(results, title):
     p_diff.set_ylabel(r'$\widehat{elpd}_{CV}$ difference')
     p_diff.legend([line_m[0], line_se[0], line_mcse[0]], ['Estimate', 'Total error', 'Monte Carlo error'])
 
-    model_rhat = results['model_max_rhat']
+    model_score_rhat = results['model_rhat_score']
     plot_handles = []
     for m in [0, 1]:
-        line = p_rhat.plot(draws, model_rhat[:, m], linestyle='solid', label=f'Model {["A","B"][m]}')
+        line = p_rhats.plot(draws, model_score_rhat[:, m], linestyle='solid', label=f'Model {["A","B"][m]}')
         plot_handles.append(line[0])
-    p_rhat.axhline(1., linestyle='dashed', linewidth=0.5)
-    p_rhat.set_title(r'Model fold max $\widehat{R}$')
-    p_rhat.legend(handles=plot_handles)
-    p_rhat.set_ylabel(r'Model $\widehat{R}$')
-    p_rhat.set_xlim(left=0)
-    p_rhat.set_ylim(bottom=min(1, float(jnp.min(model_rhat))), top=min(100, float(jnp.max(model_rhat))))
+    p_rhats.axhline(1., linestyle='dashed', linewidth=0.5)
+    p_rhats.set_title(r'Aggregate model score $\widehat{R}$')
+    p_rhats.legend(handles=plot_handles)
+    p_rhats.set_ylabel(r'Aggregate model score $\widehat{R}$')
+    p_rhats.set_xlim(left=0)
+    p_rhats.set_ylim(bottom=min(1, float(jnp.min(model_score_rhat))), top=min(100, float(jnp.max(model_score_rhat))))
 
-    p_ess.plot(draws, ess, linestyle='solid')
-    p_ess.set_title(r'Model $\widehat{ESS}$ by draw')
+    p_ess.plot(draws, ess*1e-3/K, linestyle='solid')
+    p_ess.set_title(r'Average model $\widehat{ESS}$')
     p_ess.legend(['Model A', 'Model B'])
-    p_ess.set_ylabel(r"$\widehat{ESS}$ per model")
+    p_ess.set_ylabel(r"$\widehat{ESS}$ ('000, average per fold)")
 
     p_err.plot(draws, diff_cvse, label='Cross-validation SE', linestyle='dashed')
     p_err.plot(draws, diff_mcse, label='Monte Carlo SE', linestyle='dotted')
@@ -57,7 +57,7 @@ def plot_model_results(results, title):
     if jnp.sum(stop)>0:
         stop_drawk = draws[stop][0]
         stopline = p_diff.axvline(x=stop_drawk, linestyle='dashed', linewidth=0.5)
-        p_rhat.axvline(x=stop_drawk, color=stopline.get_color(), linestyle='dashed', linewidth=0.5)
+        p_rhats.axvline(x=stop_drawk, color=stopline.get_color(), linestyle='dashed', linewidth=0.5)
         p_err.axvline(x=stop_drawk, color=stopline.get_color(), linestyle='dashed', linewidth=0.5)
         p_ess.axvline(x=stop_drawk, color=stopline.get_color(), linestyle='dashed', linewidth=0.5)
 

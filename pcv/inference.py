@@ -1110,7 +1110,7 @@ def run_cv_sel(
         model_max_rhat = jnp.nanmax(jnp.reshape(fold_rhats, (2, num_folds)), axis=1)
         model_max_rhats.append(model_max_rhat)
         # difference statistics (elpd(A) - elpd(B))
-        diff, diff_cvse = fold_elpd @ model_diffs, jnp.std(fold_elpd_diffs, ddof=1)
+        diff, diff_cvse = fold_elpd @ model_diffs, jnp.sqrt(num_folds) * jnp.std(fold_elpd_diffs, ddof=1)
         diff_se = jnp.sqrt(num_folds * jnp.var(fold_elpd_diffs, ddof=1) + jnp.sum(model_mcvars))
         diff_elpd.append(diff)
         diff_cvses.append(diff_cvse)
