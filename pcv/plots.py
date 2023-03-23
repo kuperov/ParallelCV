@@ -9,13 +9,13 @@ from pcv.rules import CONTINUE
 
 
 def plot_model_results(results, title):
-    fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(10, 6))
+    fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(12, 6))
     ((p_diff, p_rhats), (p_ess, p_err)) = axes
     K = results['num_folds']
     draws, ess = results['fold_draws'] * 1e-3, results['model_ess']
     diff_elpd, diff_se = results['diff_elpd'], results['diff_se']
     diff_mcse, diff_cvse = results['diff_mcse'], results['diff_cvse']
-    tcrit = tfd.StudentT(df=results['num_folds']+2., loc=0., scale=1.).quantile(0.975)
+    tcrit = tfd.Normal(loc=0., scale=1.).quantile(0.975)
 
     # mean
     line_m = p_diff.plot(draws, diff_elpd, linestyle='solid')
@@ -74,7 +74,7 @@ def plot_fold_results(results, title, show_legend=True):
     (p_ess, p_rhat), (p_elpds, p_divs) = axes
     drawsk, essk = results['fold_draws'] * 1e-3, results['fold_ess'] * 1e-3
     K = results['num_folds']
-    tcrit = tfd.StudentT(df=results['num_folds']+2., loc=0., scale=1.).quantile(0.975)
+    tcrit = tfd.Normal(loc=0., scale=1.).quantile(0.975)
 
     p_ess.plot(drawsk, essk[:,:K], linestyle='solid')
     p_ess.plot(drawsk, essk[:,K:], linestyle='dashed')
@@ -118,8 +118,8 @@ def plot_fold_results(results, title, show_legend=True):
 
 
 def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-    ((p_rhats, p_rhatsf), (p_rhatm, p_rhatf)) = axes
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    p_rhats, p_rhatm, p_rhatf = axes
     K = results['num_folds']
     draws, ess = results['fold_draws'] * 1e-3, results['model_ess']
 
@@ -135,13 +135,13 @@ def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
     p_rhats.set_xlim(left=0)
     p_rhats.set_ylim(bottom=min(1, float(jnp.min(model_score_rhat))), top=min(100, float(jnp.max(model_score_rhat))))
 
-    p_rhatsf.plot(draws, results['fold_rhat_score'][:,:K], linestyle='solid')
-    p_rhatsf.plot(draws, results['fold_rhat_score'][:,K:], linestyle='dashed')
-    p_rhatsf.set_title(r'Per-fold score $\widehat{R}$')
-    p_rhatsf.set_ylabel(r'Per-fold score $\widehat{R}$')
-    if show_legend:
-        p_rhatsf.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
-    p_rhatsf.set_ylim(bottom=1., top=min(100, jnp.nanmax(results['fold_rhat'])))
+    # p_rhatsf.plot(draws, results['fold_rhat_score'][:,:K], linestyle='solid')
+    # p_rhatsf.plot(draws, results['fold_rhat_score'][:,K:], linestyle='dashed')
+    # p_rhatsf.set_title(r'Per-fold score $\widehat{R}$')
+    # p_rhatsf.set_ylabel(r'Per-fold score $\widehat{R}$')
+    # if show_legend:
+    #     p_rhatsf.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
+    # p_rhatsf.set_ylim(bottom=1., top=min(100, jnp.nanmax(results['fold_rhat_score'])))
 
     model_max_rhat = results['model_max_rhat']
     plot_handles = []
@@ -163,9 +163,8 @@ def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
         p_rhatf.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
     p_rhatf.set_ylim(bottom=1., top=min(100, jnp.nanmax(results['fold_rhat'])))
 
-    for rax in axes:
-        for ax in rax:
-            ax.set_xlabel("Draws ('000, per fold)")
+    for ax in axes:
+        ax.set_xlabel("Draws ('000, per fold)")
 
     fig.suptitle(title)
     fig.tight_layout()
