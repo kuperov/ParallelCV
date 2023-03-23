@@ -55,6 +55,21 @@ class TestLogWelford(unittest.TestCase):
             log_welford_var(w, ddof=1), jnp.log(jnp.var(xs, ddof=1)), places=2
         )
 
+    def testLargeSample(self):
+        w0 = log_welford_init(shape=tuple())
+        key = jax.random.PRNGKey(0)
+        n = 100_000_000
+        # we'll multiply these by 1e-6 to get small numbers
+        lxs = jax.random.normal(key=key, shape=(n,))  # logs
+        mean_xs = jnp.mean(jnp.exp(lxs))
+        small_lxs = lxs - jnp.log(1e6)
+        w, _ = jax.lax.scan(
+            lambda carry_w, lx: (log_welford_add(lx, carry_w), None), w0, small_lxs
+        )
+        wlog_mean = log_welford_mean(w) + jnp.log(1e6)
+        self.assertAlmostEqual(jnp.exp(wlog_mean), mean_xs, places=4)
+
+
     def testBatchMoments(self):
         w0 = batch_log_welford_init(shape=tuple(), batch_size=10)
         key = jax.random.PRNGKey(0)
@@ -78,7 +93,6 @@ class TestLogWelford(unittest.TestCase):
         self.assertAlmostEqual(
             batch_log_welford_var(w, ddof=1), jnp.log(jnp.var(xs_bm, ddof=1)), places=2
         )
-
 
 class TestMultivariateWelford(unittest.TestCase):
     def testVectorMoments(self):

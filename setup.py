@@ -21,7 +21,7 @@ def _parse_requirements(req_path):
 
 setup(
     name="pcv",
-    version="0.0.25",
+    version="0.0.26",
     description="Parallel MCMC diagnostic experiment",
     long_description=long_description,
     author="Alex Cooper",

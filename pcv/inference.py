@@ -1049,6 +1049,7 @@ def run_cv_sel(
     diff_mcses, diff_elpd, diff_cvses, diff_ses = [],[],[],[]
     model_esss, model_elpdss, model_mcses, model_cvses, model_ses, model_max_rhats = [],[],[],[],[],[]
     stoprules = []
+    fold_Rhat_score, model_Rhat_score = [], []
     model_totals = jnp.vstack([
             jnp.repeat(jnp.array([1.0, 0.0]), num_folds),
             jnp.repeat(jnp.array([0.0, 1.0]), num_folds),
@@ -1062,7 +1063,8 @@ def run_cv_sel(
     fold_ids = jnp.tile(jnp.arange(num_folds), 2)
     model_ids = jnp.repeat(jnp.array([0, 1]), num_folds)
     for i in range(max_batches):
-        fold_drawss.append((i + 1) * batch_size * num_chains)
+        fold_draws = (i + 1) * batch_size * num_chains
+        fold_drawss.append(fold_draws)
         states: ExtendedState = jax.vmap(run_batch)(
             fold_ids, model_ids, warmup_results.fold_parameters, states)
         fold_ess = pred_ess_folds(states)
@@ -1078,6 +1080,22 @@ def run_cv_sel(
         fold_elpd_diffss.append(fold_elpd_diffs)
         fold_div_count = jnp.sum(states.divergences, axis=(1,))
         fold_divs.append(fold_div_count)
+        # chain rhats using delta method estimate of var(log(mean))
+        lmeans = log_welford_mean(states.pred_ws)
+        lvars = log_welford_log_var_combine(states.pred_ws, comb_axis=1, ddof=1)
+        # log var log mean(X) = log (var X / mean(X)^2 / M)
+        #                     = log var X - 2 log mean X - log M
+        logW = log_welford_var_combine(states.pred_ws, comb_axis=1, ddof=1) - 2*(logsumexp(log_welford_mean(states.pred_ws), axis=1) - jnp.log(num_chains))
+        logB = jnp.log(jnp.var(lmeans, axis=1, ddof=1)) + jnp.log(fold_draws)
+        log_varplus = jnp.logaddexp(jnp.log(fold_draws - 1) + logW, logB) - jnp.log(fold_draws)
+        log_Rhat = 0.5 * (log_varplus - logW)
+        fold_Rhat_score.append(jnp.exp(log_Rhat))
+        # combined Rhat model
+        comb = lambda x: logsumexp(jnp.reshape(x, (model.num_models, num_folds)), axis=1)
+        logWt, logBt = comb(logW), comb(logB)
+        log_varplust = jnp.logaddexp(jnp.log(fold_draws - 1) + logWt, logBt) - jnp.log(fold_draws)
+        log_Rhatt = 0.5 * (log_varplust - logWt)
+        model_Rhat_score.append(jnp.exp(log_Rhatt))
         # per-model statistics
         model_elpdss.append(fold_elpd @ model_totals)
         model_ess = fold_ess @ model_totals
@@ -1085,7 +1103,7 @@ def run_cv_sel(
         model_mcvars = fold_mcvars @ model_totals
         model_mcse = jnp.sqrt(model_mcvars)
         model_mcses.append(model_mcse)
-        model_cvvar = jnp.var(jnp.reshape(fold_elpd, (2, num_folds)), ddof=1, axis=1)
+        model_cvvar = num_folds * jnp.var(jnp.reshape(fold_elpd, (2, num_folds)), ddof=1, axis=1)
         model_cvses.append(jnp.sqrt(model_cvvar))
         model_se = jnp.sqrt(fold_mcvars @ model_totals + model_cvvar)
         model_ses.append(model_se)
@@ -1133,12 +1151,14 @@ def run_cv_sel(
         "fold_mcse": jnp.stack(fold_mcses),
         "fold_elpd_diff": jnp.stack(fold_elpd_diffss),
         "fold_divergences": jnp.stack(fold_divs),
+        "fold_rhat_score": jnp.stack(fold_Rhat_score),
         "model_ess": jnp.stack(model_esss),
         "model_elpd": jnp.stack(model_elpdss),
         "model_mcse": jnp.stack(model_mcses),
         "model_cvse": jnp.stack(model_cvses),
         "model_se": jnp.stack(model_ses),
         "model_max_rhat": jnp.stack(model_max_rhats),
+        "model_rhat_score": jnp.stack(model_Rhat_score),
         "diff_elpd": jnp.stack(diff_elpd),
         "diff_cvse": jnp.stack(diff_cvses),
         "diff_mcse": jnp.stack(diff_mcses),
