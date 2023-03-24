@@ -1044,18 +1044,19 @@ def run_cv_sel(
     )
     start_at = time.time()
     # use python flow control for now but jax can actually do this too
+    # at the cost of potentially informative output during the loop
     # https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.cond
     fold_drawss, fold_esss, fold_rhatss, fold_elpds, fold_mcses, fold_elpd_diffss, fold_divs = [],[],[],[],[],[],[]
     diff_mcses, diff_elpd, diff_cvses, diff_ses = [],[],[],[]
     model_esss, model_elpdss, model_mcses, model_cvses, model_ses, model_max_rhats = [],[],[],[],[],[]
     stoprules = []
     fold_Rhat_score, model_Rhat_score = [], []
-    model_totals = jnp.vstack([
+    model_totals_M = jnp.vstack([
             jnp.repeat(jnp.array([1.0, 0.0]), num_folds),
             jnp.repeat(jnp.array([0.0, 1.0]), num_folds),
         ]).T
-    model_diffs = jnp.repeat(jnp.array([1.0, -1.0]), num_folds)  # A - B
-    fold_diffs = jnp.vstack([jnp.eye(num_folds), -jnp.eye(num_folds)])
+    model_diffs_M = jnp.repeat(jnp.array([1.0, -1.0]), num_folds)  # A - B
+    fold_diffs_M = jnp.vstack([jnp.eye(num_folds), -jnp.eye(num_folds)])
     has_not_stopped = True
     i = 0
     divergences = jnp.zeros((2*num_folds,))
@@ -1076,7 +1077,7 @@ def run_cv_sel(
         fold_mcses.append(jnp.sqrt(fold_mcvars))
         fold_elpd = logmean(log_welford_mean(states.pred_ws), axis=1)
         fold_elpds.append(fold_elpd)
-        fold_elpd_diffs = fold_elpd @ fold_diffs
+        fold_elpd_diffs = fold_elpd @ fold_diffs_M
         fold_elpd_diffss.append(fold_elpd_diffs)
         fold_div_count = jnp.sum(states.divergences, axis=(1,))
         fold_divs.append(fold_div_count)
@@ -1097,20 +1098,20 @@ def run_cv_sel(
         log_Rhatt = 0.5 * (log_varplust - logWt)
         model_Rhat_score.append(jnp.exp(log_Rhatt))
         # per-model statistics
-        model_elpdss.append(fold_elpd @ model_totals)
-        model_ess = fold_ess @ model_totals
+        model_elpdss.append(fold_elpd @ model_totals_M)
+        model_ess = fold_ess @ model_totals_M
         model_esss.append(model_ess)
-        model_mcvars = fold_mcvars @ model_totals
+        model_mcvars = fold_mcvars @ model_totals_M
         model_mcse = jnp.sqrt(model_mcvars)
         model_mcses.append(model_mcse)
         model_cvvar = num_folds * jnp.var(jnp.reshape(fold_elpd, (2, num_folds)), ddof=1, axis=1)
         model_cvses.append(jnp.sqrt(model_cvvar))
-        model_se = jnp.sqrt(fold_mcvars @ model_totals + model_cvvar)
+        model_se = jnp.sqrt(fold_mcvars @ model_totals_M + model_cvvar)
         model_ses.append(model_se)
         model_max_rhat = jnp.nanmax(jnp.reshape(fold_rhats, (2, num_folds)), axis=1)
         model_max_rhats.append(model_max_rhat)
         # difference statistics (elpd(A) - elpd(B))
-        diff, diff_cvse = fold_elpd @ model_diffs, jnp.sqrt(num_folds) * jnp.std(fold_elpd_diffs, ddof=1)
+        diff, diff_cvse = fold_elpd @ model_diffs_M, jnp.sqrt(num_folds) * jnp.std(fold_elpd_diffs, ddof=1)
         diff_se = jnp.sqrt(num_folds * jnp.var(fold_elpd_diffs, ddof=1) + jnp.sum(model_mcvars))
         diff_elpd.append(diff)
         diff_cvses.append(diff_cvse)
