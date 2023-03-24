@@ -492,6 +492,8 @@ def one_model_inference(
     num_samples: int,
     warmup_iter: int,
     prior_only: bool = False,
+    adam_steps: int = 100,
+    adam_lr: float = 0.1
 ):
     """Compute posterior for a single fold using parallel chains.
 
@@ -520,7 +522,7 @@ def one_model_inference(
     warmup_key, sampling_key, init_key = jax.random.split(prng_key, 3)
     # warmup - GHMC adaption via MEADS
     init_chain_keys = jax.random.split(init_key, num_chains)
-    init_states = jax.vmap(lambda key: get_mode(model, key))(init_chain_keys)
+    init_states = jax.vmap(lambda key: get_mode(model, key, niter=adam_steps, learning_rate=adam_lr))(init_chain_keys)
     final_warmup_state, parameters = run_meads(
         logjoint_density_fn=model_ldens,
         num_chains=num_chains,
@@ -528,6 +530,7 @@ def one_model_inference(
         positions=init_states,
         num_steps=warmup_iter,
     )
+    print(f"GHMC alpha: {parameters['alpha']:.4f}, delta: {parameters['delta']:.4f}, step size: {parameters['step_size']:.4f}")
     # construct GHMC kernel by incorporating warmup parameters
     step_fn = ghmc.kernel()
     def kernel(rng_key, state):
