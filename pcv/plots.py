@@ -118,7 +118,7 @@ def plot_fold_results(results, title, show_legend=True):
 
 
 def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharey=True)
     p_rhats, p_rhatm, p_rhatf = axes
     K = results['num_folds']
     draws, ess = results['fold_draws'] * 1e-3, results['model_ess']
