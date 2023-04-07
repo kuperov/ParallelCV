@@ -10,3 +10,5 @@ diag/models/*_data*
 pcv.egg-info/
 **/*Rda
 .Rhistory
+notebooks/radon.sh
+**/slurm-*.out
