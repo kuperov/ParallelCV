@@ -2,10 +2,12 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
+from pcv.model import Model
 
 tfd = tfp.distributions
 tfb = tfp.bijectors
 tfpk = tfp.math.psd_kernels
+
 
 class Theta(NamedTuple):
     beta: jax.Array
@@ -25,21 +27,25 @@ def generate(
     return y, X
 
 
-def get_model(y, X, K=5):
+def get_model(y, X, K=5) -> Model:
     N, p = X.shape
     # use exp to transform sigsq to unconstrained space
     sigsq_t = tfb.Exp()
 
-    beta_prior = tfd.MultivariateNormalDiag(loc=jnp.zeros(p), scale_diag=jnp.ones(p))
+    beta_prior = tfd.MultivariateNormalDiag(loc=jnp.zeros(p), scale_diag=10*jnp.ones(p))
     sigsq_prior = tfd.Gamma(concentration=1.0, rate=1.0)
 
-    def logjoint_density(theta: Theta, fold_id: int, model_id: int) -> jax.Array:
+    def logjoint_density(theta: Theta, fold_id: int, model_id: int, prior_only: bool = False) -> jax.Array:
         """Log joint density for a given fold.
         
         Args:
-        theta: model parameters
-        fold_id: zero-based fold id for training set
-        model_id: 0 for model A, 1 for model B
+            theta: model parameters
+            fold_id: zero-based fold id for training set, -1 for entire dataset
+            model_id: 0 for model A, 1 for model B
+            prior_only: if True, only return prior density
+        
+        Returns:
+            log density
         """
         # transform to constrained space
         sigsq = sigsq_t.forward(theta.sigsq)
@@ -51,7 +57,7 @@ def get_model(y, X, K=5):
         # model A has all the predictors, model B is missing the last predictor
         beta_mask = jnp.where(model_id == 0, jnp.ones(p), jnp.concatenate([jnp.ones(p-1), jnp.zeros(1)]))
         ll_contribs = tfd.Normal(loc=X @ (theta.beta * beta_mask), scale=jnp.sqrt(sigsq)).log_prob(y)
-        ll = (ll_mask * ll_contribs).sum()
+        ll = (ll_mask * ll_contribs).sum() * (not prior_only)
         return lp + ll + sigsq_ldj
 
     # predictive density log p(y_train|theta)
@@ -71,4 +77,17 @@ def get_model(y, X, K=5):
             sigsq=jax.random.normal(key=k2))
         return theta
 
-    return logjoint_density, log_pred, make_initial_pos
+    def to_constrained(theta: Theta) -> Theta:
+        return Theta(
+            beta=theta.beta,
+            sigsq=sigsq_t.forward(theta.sigsq)
+        )
+
+    return Model(
+        num_folds=K,
+        num_models=2,
+        logjoint_density=logjoint_density,
+        log_pred=log_pred,
+        make_initial_pos=make_initial_pos,
+        to_constrained=to_constrained
+    )

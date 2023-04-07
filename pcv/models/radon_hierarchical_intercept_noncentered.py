@@ -6,6 +6,8 @@ import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
 from typing import NamedTuple, Dict, Callable, Tuple
+from pcv.model import Model
+
 
 tfd = tfp.distributions
 tfb = tfp.bijectors
@@ -20,23 +22,19 @@ tfb = tfp.bijectors
 #   real<lower=0> sigma_alpha;
 #   real<lower=0> sigma_y;
 # }
-
 # transformed parameters {
 #   vector[J] alpha;
 #   // implies: alpha ~ normal(mu_alpha, sigma_alpha);
 #   alpha = mu_alpha + sigma_alpha * alpha_raw;
 # }
-
 # model {
 #   vector[N] mu;
 #   vector[N] muj;
-
 #   sigma_alpha ~ normal(0, 1);
 #   sigma_y ~ normal(0, 1);
 #   mu_alpha ~ normal(0, 10);
 #   beta ~ normal(0, 10);
 #   alpha_raw ~ normal(0, 1);
-
 #   for(n in 1:N){
 #     muj[n] = alpha[county_idx[n]] + log_uppm[n] * beta[1];
 #     mu[n] = muj[n] + floor_measure[n] * beta[2];
@@ -67,12 +65,12 @@ def get_data():
     return {k: jnp.array(v) for (k, v) in raw_data.items()}
 
 
-def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
+def get_model(data: Dict) -> Model:
 
     sigma_a_tfm = tfb.Exp()
     sigma_y_tfm = tfb.Exp()
 
-    J, N = data['J'], data['J']
+    J = data['J']
     county_idx = data['county_idx'] - 1
     y, log_uppm, floor_measure = data['log_radon'], data['log_uppm'], data['floor_measure']
 
@@ -87,26 +85,31 @@ def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
         )
         return theta
 
-    def logjoint_density(theta: Theta, fold_id: int, model_id: int) -> jax.Array:
+    def logjoint_density(theta: Theta, fold_id: int, model_id: int, prior_only: bool = False) -> jax.Array:
         """Log joint density for a given fold.
         
         Args:
-        theta: model parameters
-        fold_id: zero-based fold id for training set
-        model_id: 0 for model A, 1 for model B
+            theta: model parameters
+            fold_id: zero-based fold id for training set
+            model_id: 0 for model A, 1 for model B
+            prior_only: if True, only return prior density
+        
+        Returns:
+            log density
         """
         # transform to constrained space
         sigma_alpha = sigma_a_tfm.forward(theta.sigma_alpha)
         sigma_y = sigma_y_tfm.forward(theta.sigma_y)
         sigma_alpha_ldj = sigma_a_tfm.forward_log_det_jacobian(theta.sigma_alpha)
         sigma_y_ldj = sigma_y_tfm.forward_log_det_jacobian(theta.sigma_y)
+        ldj = sigma_y_ldj + sigma_alpha_ldj
         # prior is same for all folds
         lp = (
             tfd.Normal(loc=0, scale=1).log_prob(sigma_alpha)
             + tfd.Normal(loc=0, scale=1).log_prob(sigma_y)
-            + tfd.Normal(loc=0, scale=10).log_prob(theta.mu_alpha)
-            + tfd.Normal(loc=0, scale=10).log_prob(theta.beta).sum()
-            + tfd.Normal(loc=0, scale=1).log_prob(theta.alpha_raw).sum()
+            + tfd.Normal(loc=0, scale=10.).log_prob(theta.mu_alpha)
+            + tfd.Normal(loc=0, scale=10.).log_prob(theta.beta).sum()
+            + tfd.Normal(loc=0, scale=1.).log_prob(theta.alpha_raw).sum()
         )
         # noncentering transform: alpha ~ normal(mu_alpha, sigma_alpha)
         alpha = theta.mu_alpha + sigma_alpha * theta.alpha_raw
@@ -116,8 +119,9 @@ def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
         mu = muj + floor_measure * theta.beta[1]
         ll_contribs = tfd.Normal(loc=mu, scale=sigma_y).log_prob(y)
         fold_mask = (county_idx != fold_id).astype(jnp.float32)
-        ll = (fold_mask * ll_contribs).sum()
-        return lp + ll + sigma_alpha_ldj + sigma_y_ldj
+        lhood_mask = 1.0 * (not prior_only)
+        ll = (fold_mask * ll_contribs).sum() * lhood_mask
+        return lp + ll + ldj
 
     def log_pred(theta: Theta, fold_id: int, model_id: int) -> jax.Array:
         """Log predictive density for a given fold.
@@ -130,13 +134,27 @@ def get_model(data: Dict) -> Tuple[Callable, Callable, Callable]:
         sigma_y = sigma_y_tfm.forward(theta.sigma_y)
         # noncentering transform: alpha ~ normal(mu_alpha, sigma_alpha)
         alpha = theta.mu_alpha + sigma_alpha * theta.alpha_raw
-        # likelihood for fold
-        include_log_uppm = 1.0 * (model_id == 0)  # only include log_uppm in model A
-        muj = alpha[county_idx] + log_uppm * theta.beta[0] * include_log_uppm
+        # pred density for fold -- only include log_uppm in model 0
+        muj = alpha[county_idx] + log_uppm * jnp.where(model_id == 0, theta.beta[0], 0.)
         mu = muj + floor_measure * theta.beta[1]
         ll_contribs = tfd.Normal(loc=mu, scale=sigma_y).log_prob(y)
-        fold_mask = (county_idx == fold_id).astype(jnp.float32)
-        lpred = (fold_mask * ll_contribs).sum()
-        return lpred
+        lpred = jnp.where(county_idx == fold_id, ll_contribs, 0.)
+        return jnp.sum(lpred)
 
-    return make_initial_pos, log_pred, logjoint_density
+    def to_constrained(theta: Theta) -> Theta:
+        return Theta(
+            alpha_raw=theta.alpha_raw,
+            beta=theta.beta,
+            mu_alpha=theta.mu_alpha,
+            sigma_alpha=sigma_a_tfm.forward(theta.sigma_alpha),
+            sigma_y=sigma_y_tfm.forward(theta.sigma_y),
+        )
+
+    return Model(
+        num_folds=J,
+        num_models=2,
+        logjoint_density=logjoint_density,
+        log_pred=log_pred,
+        make_initial_pos=make_initial_pos,
+        to_constrained=to_constrained
+    )
