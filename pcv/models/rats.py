@@ -71,7 +71,9 @@ def get_data():
             with z.open(filename) as f:
                 data = f.read()
                 raw_data = json.loads(data.decode('utf-8'))
-    return {k: jnp.array(v) for (k, v) in raw_data.items()}
+    data = {k: jnp.array(v) for (k, v) in raw_data.items()}
+    data['y'] = data['y'] * 1.0  # kludge into fp32 or fp64
+    return data
 
 
 def get_model(data: Dict) -> Model:
@@ -86,13 +88,13 @@ def get_model(data: Dict) -> Model:
     def make_initial_pos(key: jax.random.KeyArray) -> Theta:
         k1, k2, k3, k4, k5, k6 = jax.random.split(key, 6)
         theta = Theta(
-            alpha=jax.random.normal(key=k1, shape=(N,)),
-            beta=jax.random.normal(key=k2, shape=(N,)),
-            mu_alpha=jax.random.normal(key=k3),
-            mu_beta=jax.random.normal(key=k3),
-            sigma_y=jax.random.normal(key=k4),
-            sigma_alpha=jax.random.normal(key=k5),
-            sigma_beta=jax.random.normal(key=k6),
+            alpha=0.01*jax.random.normal(key=k1, shape=(N,)),
+            beta=0.01*jax.random.normal(key=k2, shape=(N,)),
+            mu_alpha=0.01*jax.random.normal(key=k3),
+            mu_beta=0.01*jax.random.normal(key=k3),
+            sigma_y=0.5 + 0.1*jax.random.normal(key=k4),
+            sigma_alpha=0.5 + 0.1*jax.random.normal(key=k5),
+            sigma_beta=0.5 + 0.1*jax.random.normal(key=k6),
         )
         return theta
 
@@ -122,7 +124,10 @@ def get_model(data: Dict) -> Model:
         ldj = sigma_alpha_ldj + sigma_beta_ldj + sigma_y_ldj
         # prior is same for all folds
         lp = (
-            # sigma_y, sigma_alpha, sigma_beta : flat
+            # sigma_y, sigma_alpha, sigma_beta : flat in original but half cauchy here
+            #tfd.HalfCauchy(loc=0, scale=100).log_prob(sigma_y)
+            #+ tfd.HalfCauchy(loc=0, scale=100).log_prob(sigma_alpha)
+            #+ tfd.HalfCauchy(loc=0, scale=100).log_prob(sigma_beta)
             tfd.Normal(loc=0, scale=100).log_prob(theta.mu_alpha)
             + tfd.Normal(loc=0, scale=100).log_prob(theta.mu_beta)
             + tfd.Normal(loc=theta.mu_alpha, scale=sigma_alpha).log_prob(theta.alpha).sum()
