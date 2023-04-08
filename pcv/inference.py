@@ -281,6 +281,10 @@ def inference_loop(
         2-Tuple containing ExtendedState for two chain halves, and the MCMC
         trace if online if False.
     """
+<<<<<<< HEAD
+=======
+    log_samp = jnp.log(num_samples)
+>>>>>>> main
     batch_size: int = int(
         jnp.floor(num_samples**0.5)
     )  # batch size for computing batch mean, variance
@@ -653,7 +657,10 @@ def cv_adaptation(
             rng_key=chain_rng_key,
             pred_ws=log_welford_init(shape=tuple()),
             pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
+<<<<<<< HEAD
             pred_bws3=batch_log_welford_init(shape=tuple(), batch_size=batch_size//3),
+=======
+>>>>>>> main
             divergences=jnp.array(0),
         )
 
@@ -798,7 +805,10 @@ def simple_cv_adaptation(
             rng_key=chain_rng_key,
             pred_ws=log_welford_init(shape=tuple()),
             pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
+<<<<<<< HEAD
             pred_bws3=batch_log_welford_init(shape=tuple(), batch_size=batch_size//3),
+=======
+>>>>>>> main
             divergences=jnp.array(0),
         )
     # step 1: MEADS adaptation for the chosen model
@@ -1096,6 +1106,7 @@ def run_cv_sel(
         log_varplust = jnp.logaddexp(jnp.log(fold_draws - 1) + logWt, logBt) - jnp.log(fold_draws)
         log_Rhatt = 0.5 * (log_varplust - logWt)
         model_Rhat_score.append(jnp.exp(log_Rhatt))
+<<<<<<< HEAD
         # lugsail rhat estimators
         lvars = log_welford_var_combine(states.pred_ws, comb_axis=1, ddof=1)
         lvarsb = log_welford_var_combine(states.pred_bws.batches, comb_axis=1, ddof=1)
@@ -1103,6 +1114,8 @@ def run_cv_sel(
         lvarsl = jnp.log(2) + lvarsb + jnp.log1p(-jnp.exp(lvarsb3 - lvarsb - jnp.log(2)))
         coef = jnp.maximum(jnp.log(2) + lvarsb, lvarsb3)
         lvarsl = coef + jnp.log(2 * jnp.exp(lvarsb - coef) - jnp.exp(lvarsb3 - coef))
+=======
+>>>>>>> main
         # per-model statistics
         model_elpdss.append(fold_elpd @ model_totals_M)
         model_ess = fold_ess @ model_totals_M
