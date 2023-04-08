@@ -176,7 +176,8 @@ class ExtendedState(NamedTuple):
     state: GHMCState  # current HMC state
     rng_key: jax.random.KeyArray  # current random seed
     pred_ws: LogWelfordState  # accumulator for log predictive
-    pred_bws: BatchLogWelfordState  # batch accumulator for log predictive
+    pred_bws: BatchLogWelfordState  # batch accumulator for log predictive, size b
+    pred_bws3: BatchLogWelfordState  # batch accumulator for log predictive, size floor(b/3)
     divergences: jax.Array  # divergence counts (int array)
 
 
@@ -280,7 +281,10 @@ def inference_loop(
         2-Tuple containing ExtendedState for two chain halves, and the MCMC
         trace if online if False.
     """
+<<<<<<< HEAD
+=======
     log_samp = jnp.log(num_samples)
+>>>>>>> main
     batch_size: int = int(
         jnp.floor(num_samples**0.5)
     )  # batch size for computing batch mean, variance
@@ -288,18 +292,14 @@ def inference_loop(
     def one_mcmc_step(ext_state: ExtendedState, _idx):
         i_key, carry_key = jax.random.split(ext_state.rng_key)
         chain_state, chain_info = kernel(i_key, ext_state.state)
-        elpd_contrib = (
-            log_pred(chain_state.position) - log_samp
-        )  # contrib to mean log predictive
-        div_count = ext_state.divergences + 1.0 * chain_info.is_divergent
-        carry_pred_ws = log_welford_add(elpd_contrib, ext_state.pred_ws)
-        carry_pred_bws = batch_log_welford_add(elpd_contrib, ext_state.pred_bws)
+        elpd_contrib = log_pred(chain_state.position)
         carry_state = ExtendedState(
             state=chain_state,
             rng_key=carry_key,
-            pred_ws=carry_pred_ws,
-            pred_bws=carry_pred_bws,
-            divergences=div_count,
+            pred_ws=log_welford_add(elpd_contrib, ext_state.pred_ws),
+            pred_bws=batch_log_welford_add(elpd_contrib, ext_state.pred_bws),
+            pred_bws3=batch_log_welford_add(elpd_contrib, ext_state.pred_bws3),
+            divergences=ext_state.divergences + chain_info.is_divergent,
         )
         if online:
             return carry_state, None  # don't retain chain trace
@@ -311,6 +311,7 @@ def inference_loop(
         rng_key=rng_key,
         pred_ws=log_welford_init(shape=tuple()),
         pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
+        pred_bws3=batch_log_welford_init(shape=tuple(), batch_size=batch_size//3),
         divergences=jnp.array(0),
     )
     state, trace = jax.lax.scan(one_mcmc_step, init_state, jnp.arange(0, num_samples))
@@ -372,8 +373,8 @@ def fold_posterior(
     # central points for estimating folded rhat
     centers = tree_map(lambda x: jnp.median(x, axis=0), final_warmup_state.position)
     # run chain
-    results = jax.vmap(inference_loop, in_axes=(0, None, 0, None, None, None, None))(
-        sampling_keys, kernel, final_warmup_state, num_samples, log_p, centers, online
+    results = jax.vmap(inference_loop, in_axes=(0, None, 0, None, None, None))(
+        sampling_keys, kernel, final_warmup_state, num_samples, log_p, online
     )
     return results
 
@@ -418,6 +419,7 @@ def init_batch_inference_state(
             rng_key=chain_rng_key,
             pred_ws=log_welford_init(shape=tuple()),
             pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
+            pred_bws3=batch_log_welford_init(shape=tuple(), batch_size=batch_size//3),
             divergences=jnp.array(0),
         )
     states = jax.vmap(create_state, in_axes=(0,0,),)(final_warmup_state, sampling_keys)
@@ -461,18 +463,14 @@ def fold_batched_inference_loop(
             """Single chain, single MCMC step."""
             iter_key, carry_key = jax.random.split(ext_state.rng_key)
             chain_state, chain_info = kernel(iter_key, ext_state.state)
-            elpd_contrib = log_pred(
-                chain_state.position
-            )  # contrib to mean log predictive
-            div_count = ext_state.divergences + 1.0 * chain_info.is_divergent
-            carry_pred_ws = log_welford_add(elpd_contrib, ext_state.pred_ws)
-            carry_pred_bws = batch_log_welford_add(elpd_contrib, ext_state.pred_bws)
+            elpd_contrib = log_pred(chain_state.position)
             carry_state = ExtendedState(
                 state=chain_state,
                 rng_key=carry_key,
-                pred_ws=carry_pred_ws,
-                pred_bws=carry_pred_bws,
-                divergences=div_count,
+                pred_ws=log_welford_add(elpd_contrib, ext_state.pred_ws),
+                pred_bws=batch_log_welford_add(elpd_contrib, ext_state.pred_bws),
+                pred_bws3=batch_log_welford_add(elpd_contrib, ext_state.pred_bws3),
+                divergences=ext_state.divergences + chain_info.is_divergent,
             )
             return carry_state, None  # don't retain chain trace
 
@@ -659,6 +657,10 @@ def cv_adaptation(
             rng_key=chain_rng_key,
             pred_ws=log_welford_init(shape=tuple()),
             pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
+<<<<<<< HEAD
+            pred_bws3=batch_log_welford_init(shape=tuple(), batch_size=batch_size//3),
+=======
+>>>>>>> main
             divergences=jnp.array(0),
         )
 
@@ -803,6 +805,10 @@ def simple_cv_adaptation(
             rng_key=chain_rng_key,
             pred_ws=log_welford_init(shape=tuple()),
             pred_bws=batch_log_welford_init(shape=tuple(), batch_size=batch_size),
+<<<<<<< HEAD
+            pred_bws3=batch_log_welford_init(shape=tuple(), batch_size=batch_size//3),
+=======
+>>>>>>> main
             divergences=jnp.array(0),
         )
     # step 1: MEADS adaptation for the chosen model
@@ -1100,6 +1106,16 @@ def run_cv_sel(
         log_varplust = jnp.logaddexp(jnp.log(fold_draws - 1) + logWt, logBt) - jnp.log(fold_draws)
         log_Rhatt = 0.5 * (log_varplust - logWt)
         model_Rhat_score.append(jnp.exp(log_Rhatt))
+<<<<<<< HEAD
+        # lugsail rhat estimators
+        lvars = log_welford_var_combine(states.pred_ws, comb_axis=1, ddof=1)
+        lvarsb = log_welford_var_combine(states.pred_bws.batches, comb_axis=1, ddof=1)
+        lvarsb3 = log_welford_var_combine(states.pred_bws3.batches, comb_axis=1, ddof=1)
+        lvarsl = jnp.log(2) + lvarsb + jnp.log1p(-jnp.exp(lvarsb3 - lvarsb - jnp.log(2)))
+        coef = jnp.maximum(jnp.log(2) + lvarsb, lvarsb3)
+        lvarsl = coef + jnp.log(2 * jnp.exp(lvarsb - coef) - jnp.exp(lvarsb3 - coef))
+=======
+>>>>>>> main
         # per-model statistics
         model_elpdss.append(fold_elpd @ model_totals_M)
         model_ess = fold_ess @ model_totals_M

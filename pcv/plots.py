@@ -135,6 +135,8 @@ def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
     p_rhats.set_xlim(left=0)
     p_rhats.set_ylim(bottom=min(1, float(jnp.min(model_score_rhat))), top=min(100, float(jnp.max(model_score_rhat))))
 
+<<<<<<< HEAD
+=======
     # p_rhatsf.plot(draws, results['fold_rhat_score'][:,:K], linestyle='solid')
     # p_rhatsf.plot(draws, results['fold_rhat_score'][:,K:], linestyle='dashed')
     # p_rhatsf.set_title(r'Per-fold score $\widehat{R}$')
@@ -143,6 +145,7 @@ def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
     #     p_rhatsf.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
     # p_rhatsf.set_ylim(bottom=1., top=min(100, jnp.nanmax(results['fold_rhat_score'])))
 
+>>>>>>> main
     model_max_rhat = results['model_max_rhat']
     plot_handles = []
     for m in [0, 1]:
@@ -153,7 +156,11 @@ def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
     p_rhatm.legend(handles=plot_handles)
     p_rhatm.set_ylabel(r'Model fold max $\widehat{R}$')
     p_rhatm.set_xlim(left=0)
+<<<<<<< HEAD
+    #p_rhatm.set_ylim(bottom=min(1, float(jnp.min(model_max_rhat))), top=min(100, float(jnp.max(model_max_rhat))))
+=======
     p_rhatm.set_ylim(bottom=min(1, float(jnp.min(model_max_rhat))), top=min(100, float(jnp.max(model_max_rhat))))
+>>>>>>> main
 
     p_rhatf.plot(draws, results['fold_rhat'][:,:K], linestyle='solid')
     p_rhatf.plot(draws, results['fold_rhat'][:,K:], linestyle='dashed')
@@ -161,7 +168,11 @@ def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
     p_rhatf.set_ylabel(r'Per-fold $\widehat{R}$')
     if show_legend:
         p_rhatf.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
+<<<<<<< HEAD
+    #p_rhatf.set_ylim(bottom=1., top=min(100, jnp.nanmax(results['fold_rhat'])))
+=======
     p_rhatf.set_ylim(bottom=1., top=min(100, jnp.nanmax(results['fold_rhat'])))
+>>>>>>> main
 
     for ax in axes:
         ax.set_xlabel("Draws ('000, per fold)")
