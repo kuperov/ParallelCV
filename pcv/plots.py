@@ -133,7 +133,6 @@ def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
     p_rhats.legend(handles=plot_handles)
     p_rhats.set_ylabel(r'Aggregate model score $\widehat{R}$')
     p_rhats.set_xlim(left=0)
-    p_rhats.set_ylim(bottom=min(1, float(jnp.min(model_score_rhat))), top=min(100, float(jnp.max(model_score_rhat))))
 
     # p_rhatsf.plot(draws, results['fold_rhat_score'][:,:K], linestyle='solid')
     # p_rhatsf.plot(draws, results['fold_rhat_score'][:,K:], linestyle='dashed')
@@ -153,7 +152,6 @@ def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
     p_rhatm.legend(handles=plot_handles)
     p_rhatm.set_ylabel(r'Model fold max $\widehat{R}$')
     p_rhatm.set_xlim(left=0)
-    p_rhatm.set_ylim(bottom=min(1, float(jnp.min(model_max_rhat))), top=min(100, float(jnp.max(model_max_rhat))))
 
     p_rhatf.plot(draws, results['fold_rhat'][:,:K], linestyle='solid')
     p_rhatf.plot(draws, results['fold_rhat'][:,K:], linestyle='dashed')
@@ -161,7 +159,10 @@ def plot_rhats(results, title='Rhat diagnostics', show_legend=False):
     p_rhatf.set_ylabel(r'Per-fold $\widehat{R}$')
     if show_legend:
         p_rhatf.legend([f'model {"A" if i < K else "B"} fold {i % K}' for i in range(2*K)], ncol=2)
-    p_rhatf.set_ylim(bottom=1., top=min(100, jnp.nanmax(results['fold_rhat'])))
+
+    ymax = max(max(float(jnp.max(model_score_rhat)), float(jnp.max(model_max_rhat))), jnp.nanmax(results['fold_rhat']))
+    for ax in [p_rhats, p_rhatm, p_rhatf]:
+        ax.set_ylim(bottom=1., top=min(100, ymax))
 
     for ax in axes:
         ax.set_xlabel("Draws ('000, per fold)")
